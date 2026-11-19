@@ -13,7 +13,7 @@
       in {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "aniworld-cli-rust";
-          version = "0.2.0";
+          version = "0.2.1";
           src = ./.;
           cargoLock = {
             lockFile = ./Cargo.lock;
@@ -35,5 +35,9 @@
           '';
         };
       }
-    );
+    ) // {
+      overlays.default = final: prev: {
+        aniworld-cli = self.packages.${final.system}.default;
+      };
+    };
 }

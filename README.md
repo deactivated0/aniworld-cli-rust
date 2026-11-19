@@ -5,7 +5,7 @@
 **Blazing-fast, native Rust terminal client for AniWorld anime streaming with mpv integration.**
 
 [![Rust CI](https://github.com/deactivated0/aniworld-cli-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/deactivated0/aniworld-cli-rust/actions/workflows/ci.yml)
-[![Rust Version](https://img.shields.io/badge/rust-1.100%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust Version](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
@@ -37,7 +37,7 @@ Unlike heavy script-based alternatives or bloated electron wrappers, `aniworld-c
 
 ## 📦 Requirements
 
-- **Rust toolchain:** `stable` (Rust 1.100.0+ recommended) if building from source
+- **Rust toolchain:** `stable` (Rust 1.85.0+ / Rust Edition 2024) if building from source
 - **Video Player:** **[mpv](https://mpv.io/)** installed and accessible via `PATH` (or configured via `--player`)
 - **Operating Systems Supported:** Linux (all distros), macOS, Windows, FreeBSD, NixOS
 
@@ -191,6 +191,54 @@ nix profile install github:deactivated0/aniworld-cli-rust
   };
 }
 ```
+
+> [!TIP]
+> **Important Note on `follows = "nixpkgs"`:**
+> Avoid adding `inputs.aniworld-cli.inputs.nixpkgs.follows = "nixpkgs"` unless your system's `nixpkgs` channel includes **Rust 1.85+** (Rust 2024 edition). 
+> Leaving `follows` omitted allows `aniworld-cli` to use its own pinned `nixos-unstable` nixpkgs input with a modern Rust toolchain.
+
+#### Or use the Nix Overlay:
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    aniworld-cli.url = "github:deactivated0/aniworld-cli-rust";
+  };
+
+  outputs = { self, nixpkgs, aniworld-cli, ... }: {
+    nixosConfigurations.myhostname = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        {
+          nixpkgs.overlays = [ aniworld-cli.overlays.default ];
+          environment.systemPackages = with pkgs; [
+            mpv
+            aniworld-cli
+          ];
+        }
+      ];
+    };
+  };
+}
+```
+
+#### Troubleshooting Nix Builds:
+
+> [!WARNING]
+> **Error:** `error: rustc 1.xx is not supported by the following package: aniworld-cli-rust requires rustc 1.85`
+>
+> * **Cause:** Your system `flake.nix` has `aniworld-cli.inputs.nixpkgs.follows = "nixpkgs"` pointing to a NixOS channel whose Rust compiler is older than Rust 1.85 (the minimum version for Rust 2024 edition).
+> * **Solution 1:** In `/etc/nixos/flake.nix`, remove the `aniworld-cli.inputs.nixpkgs.follows = "nixpkgs";` line so Nix uses `aniworld-cli`'s up-to-date toolchain. Then run:
+>   ```bash
+>   nix flake update aniworld-cli
+>   sudo nixos-rebuild switch --flake /etc/nixos#myhostname
+>   ```
+> * **Solution 2:** Update your host `nixpkgs` input to the latest `nixos-unstable` channel:
+>   ```bash
+>   nix flake lock --update-input nixpkgs
+>   ```
+> * **Solution 3:** Alternatively, run `nix run github:deactivated0/aniworld-cli-rust` or install a pre-compiled binary from [GitHub Releases](https://github.com/deactivated0/aniworld-cli-rust/releases).
 
 #### Or use the Nix development shell:
 
