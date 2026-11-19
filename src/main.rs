@@ -13,7 +13,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use dialoguer::{FuzzySelect, Select, theme::ColorfulTheme};
+use dialoguer::{Select, theme::ColorfulTheme};
 use url::Url;
 
 use crate::{
@@ -196,17 +196,29 @@ impl App {
         Ok(results[index].clone())
     }
 
-    fn pick(&self, prompt: &str, options: &[String]) -> Result<usize> {
+    fn pick_menu(&self, prompt: &str, options: &[String], default: usize) -> Result<usize> {
         anyhow::ensure!(!options.is_empty(), "No choices available for {prompt}");
         if options.len() == 1 || self.opts.no_menu || self.opts.json {
             return Ok(0);
         }
-        FuzzySelect::with_theme(&ColorfulTheme::default())
+        let term_height = console::Term::stderr().size().0 as usize;
+        let max_len = if term_height >= 12 {
+            term_height.saturating_sub(4).clamp(6, 12)
+        } else {
+            8
+        };
+        let default_idx = default.min(options.len() - 1);
+        Select::with_theme(&ColorfulTheme::default())
             .with_prompt(prompt)
-            .default(0)
+            .default(default_idx)
             .items(options)
+            .max_length(max_len)
             .interact_opt()?
             .context("Selection cancelled")
+    }
+
+    fn pick(&self, prompt: &str, options: &[String]) -> Result<usize> {
+        self.pick_menu(prompt, options, 0)
     }
 
     fn choose_episode(&mut self, series: &Series) -> Result<Episode> {
@@ -245,10 +257,10 @@ impl App {
                 }
             }
         }
-        self.select_episode(series)
+        self.select_episode(series, None)
     }
 
-    fn select_episode(&mut self, series: &Series) -> Result<Episode> {
+    fn select_season(&mut self, series: &Series, current_season: Option<u32>) -> Result<u32> {
         let seasons = self.seasons(series)?;
         let choices = seasons
             .iter()
@@ -260,15 +272,47 @@ impl App {
                 }
             })
             .collect::<Vec<_>>();
+        let default_idx = current_season
+            .and_then(|cur| seasons.iter().position(|s| *s == cur))
+            .unwrap_or(0);
         let season_index = if self.opts.no_menu || self.opts.json {
             seasons.iter().position(|s| *s > 0).unwrap_or(0)
         } else {
-            self.pick("Season / movies", &choices)?
+            self.pick_menu("Season / movies", &choices, default_idx)?
         };
-        let all = self.episodes(series, seasons[season_index])?;
+        Ok(seasons[season_index])
+    }
+
+    fn select_episode_in_season(
+        &mut self,
+        series: &Series,
+        season: u32,
+        current_ep: Option<&Episode>,
+    ) -> Result<Episode> {
+        let all = self.episodes(series, season)?;
+        anyhow::ensure!(!all.is_empty(), "No episodes found in this season");
+
         let choices = all.iter().map(Episode::display).collect::<Vec<_>>();
-        let index = self.pick("Episode", &choices)?;
+        let default_idx = current_ep
+            .and_then(|cur| {
+                all.iter()
+                    .position(|e| e.season == cur.season && e.number == cur.number)
+            })
+            .unwrap_or(0);
+
+        let prompt = if season == 0 {
+            "Select movie"
+        } else {
+            "Select episode"
+        };
+        let index = self.pick_menu(prompt, &choices, default_idx)?;
         Ok(all[index].clone())
+    }
+
+    fn select_episode(&mut self, series: &Series, current_ep: Option<&Episode>) -> Result<Episode> {
+        let current_season = current_ep.map(|e| e.season);
+        let season = self.select_season(series, current_season)?;
+        self.select_episode_in_season(series, season, current_ep)
     }
 
     fn choose_language(&self, hosts: &[Host], remembered: Option<&str>) -> Result<String> {
@@ -278,39 +322,53 @@ impl App {
         if let Some(lang) = remembered.filter(|lang| available.iter().any(|v| v == *lang)) {
             return Ok(lang.to_string());
         }
-        let index = self.pick(
+        let index = self.pick_menu(
             if self.german() {
                 "Sprache"
             } else {
                 "Audio / subtitles"
             },
             &available,
+            0,
         )?;
         Ok(available[index].clone())
     }
 
     fn start(&mut self) -> Result<()> {
-        let series = self.choose_series()?;
+        let mut series = self.choose_series()?;
         let mut current = self.choose_episode(&series)?;
         let mut remembered_language: Option<String> = None;
+        let mut forced_language: Option<String> = None;
+        let mut forced_hoster: Option<String> = None;
+        let mut extra_mpv_flags: Vec<String> = Vec::new();
+
         loop {
             if !self.opts.json {
                 println!("\n▶ {}  {}", series.title, current.display());
             }
             let hosts = self.episode_hosts(&current)?;
-            let lang = self.choose_language(&hosts, remembered_language.as_deref())?;
-            let chosen_lang = if self.opts.no_menu || self.opts.json {
+            let chosen_lang = if let Some(fl) = forced_language.take() {
+                Some(fl)
+            } else if self.opts.no_menu || self.opts.json {
                 None
             } else {
-                Some(lang.as_str())
+                let lang = self.choose_language(&hosts, remembered_language.as_deref())?;
+                Some(lang)
             };
+
+            let mut host_priority = self.opts.preferred_hosters();
+            if let Some(fh) = forced_hoster.take() {
+                host_priority.retain(|h| !h.eq_ignore_ascii_case(&fh));
+                host_priority.insert(0, fh);
+            }
+
             let (stream, chosen) = resolve::resolve(
                 &hosts,
                 &self.net,
                 &self.opts.user_agent,
-                chosen_lang,
+                chosen_lang.as_deref(),
                 &self.opts.preferred_languages(),
-                &self.opts.preferred_hosters(),
+                &host_priority,
                 !self.opts.no_verify,
                 self.opts.json,
             )?;
@@ -329,12 +387,22 @@ impl App {
                 return Ok(());
             }
             println!("Resolved via {} ({})", chosen.name, chosen.language);
+
+            let mut play_args = self.opts.mpv_args.clone();
+            play_args.append(&mut extra_mpv_flags);
+            if !play_args
+                .iter()
+                .any(|a| a.starts_with("--save-position-on-quit"))
+            {
+                play_args.push("--save-position-on-quit".to_string());
+            }
+
             player::play(
                 self.opts.player.as_deref(),
                 &stream,
                 &series,
                 &current,
-                &self.opts.mpv_args,
+                &play_args,
             )?;
             self.state.record(&series, &current);
             if let Err(e) = state::save(&self.state) {
@@ -351,38 +419,241 @@ impl App {
             if self.opts.no_menu {
                 break;
             }
-            let options = [
+
+            const MENU_OPTIONS: [&str; 12] = [
                 "Next episode",
                 "Previous episode",
                 "Replay",
+                "Resume playback",
                 "Select episode",
+                "Select season",
+                "Change language",
+                "Change hoster",
+                "Search another anime",
+                "Add to watchlist",
+                "Toggle auto-next",
                 "Quit",
             ];
-            let option = Select::with_theme(&ColorfulTheme::default())
-                .with_prompt("After playback")
-                .items(&options)
-                .default(0)
-                .interact_opt()?;
-            match option {
-                Some(0) => {
-                    if let Some(next) = self.next(&series, &current, false)? {
-                        current = next;
-                    } else {
-                        println!("No later episode found.");
-                        break;
+
+            let mut menu_default = 0;
+            let action = loop {
+                let choice = Select::with_theme(&ColorfulTheme::default())
+                    .with_prompt("After playback")
+                    .items(&MENU_OPTIONS)
+                    .default(menu_default)
+                    .max_length(15)
+                    .interact_opt()?;
+
+                match choice {
+                    Some(0) => {
+                        // Next episode
+                        if let Some(next) = self.next(&series, &current, false)? {
+                            break Some(next);
+                        } else {
+                            println!("No later episode found in this series.");
+                            menu_default = 0;
+                        }
+                    }
+                    Some(1) => {
+                        // Previous episode
+                        if let Some(prev) = self.previous(&series, &current)? {
+                            break Some(prev);
+                        } else {
+                            println!("No earlier episode found in this series.");
+                            menu_default = 1;
+                        }
+                    }
+                    Some(2) => {
+                        // Replay
+                        extra_mpv_flags.push("--start=0".to_string());
+                        println!("Replaying {} from beginning...", current.display());
+                        break Some(current.clone());
+                    }
+                    Some(3) => {
+                        // Resume playback
+                        extra_mpv_flags.push("--save-position-on-quit".to_string());
+                        println!("Resuming playback of {}...", current.display());
+                        break Some(current.clone());
+                    }
+                    Some(4) => {
+                        // Select episode (in current season)
+                        match self.select_episode_in_season(&series, current.season, Some(&current))
+                        {
+                            Ok(ep) => break Some(ep),
+                            Err(e) => {
+                                eprintln!("Episode selection error: {e}");
+                                menu_default = 4;
+                            }
+                        }
+                    }
+                    Some(5) => {
+                        // Select season (and then episode)
+                        match self.select_episode(&series, Some(&current)) {
+                            Ok(ep) => break Some(ep),
+                            Err(e) => {
+                                eprintln!("Season/episode selection error: {e}");
+                                menu_default = 5;
+                            }
+                        }
+                    }
+                    Some(6) => {
+                        // Change language
+                        match self.episode_hosts(&current) {
+                            Ok(hosts) => {
+                                let available = resolve::ordered_languages(
+                                    &hosts,
+                                    &self.opts.preferred_languages(),
+                                );
+                                if available.is_empty() {
+                                    println!("No languages offered for this episode.");
+                                    menu_default = 6;
+                                } else {
+                                    let default_idx = remembered_language
+                                        .as_deref()
+                                        .and_then(|l| available.iter().position(|v| v == l))
+                                        .unwrap_or(0);
+                                    if let Ok(idx) =
+                                        self.pick_menu("Audio / subtitles", &available, default_idx)
+                                    {
+                                        remembered_language = Some(available[idx].clone());
+                                        forced_language = Some(available[idx].clone());
+                                        println!("Language set to: {}", available[idx]);
+                                        break Some(current.clone());
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Could not load episode languages: {e}");
+                                menu_default = 6;
+                            }
+                        }
+                    }
+                    Some(7) => {
+                        // Change hoster
+                        match self.episode_hosts(&current) {
+                            Ok(hosts) => {
+                                let host_labels = hosts
+                                    .iter()
+                                    .map(|h| format!("{} ({})", h.name, h.language))
+                                    .collect::<Vec<_>>();
+                                if host_labels.is_empty() {
+                                    println!("No hosters found for this episode.");
+                                    menu_default = 7;
+                                } else {
+                                    if let Ok(idx) =
+                                        self.pick_menu("Choose hoster", &host_labels, 0)
+                                    {
+                                        let h = &hosts[idx];
+                                        forced_hoster = Some(h.name.clone());
+                                        forced_language = Some(h.language.clone());
+                                        remembered_language = Some(h.language.clone());
+                                        println!("Hoster set to: {} ({})", h.name, h.language);
+                                        break Some(current.clone());
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                eprintln!("Could not load hosters: {e}");
+                                menu_default = 7;
+                            }
+                        }
+                    }
+                    Some(8) => {
+                        // Search another anime
+                        print!(
+                            "{}: ",
+                            if self.german() {
+                                "Anime suchen"
+                            } else {
+                                "Search anime"
+                            }
+                        );
+                        io::stdout().flush()?;
+                        let mut q = String::new();
+                        io::stdin().read_line(&mut q)?;
+                        let q = q.trim();
+                        if !q.is_empty() {
+                            match self.net.get_search(q) {
+                                Ok(resp) => match catalog::search_results(&resp, self.net.root()) {
+                                    Ok(results) if !results.is_empty() => {
+                                        let labels = results
+                                            .iter()
+                                            .map(|s| s.title.clone())
+                                            .collect::<Vec<_>>();
+                                        if let Ok(idx) = self.pick_menu("Choose series", &labels, 0)
+                                        {
+                                            series = results[idx].clone();
+                                            match self.select_episode(&series, None) {
+                                                Ok(ep) => {
+                                                    remembered_language = None;
+                                                    forced_hoster = None;
+                                                    forced_language = None;
+                                                    break Some(ep);
+                                                }
+                                                Err(e) => {
+                                                    eprintln!("Could not select episode: {e}");
+                                                    menu_default = 8;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Ok(_) => {
+                                        println!("No anime series found matching '{q}'.");
+                                        menu_default = 8;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("Search parse error: {e}");
+                                        menu_default = 8;
+                                    }
+                                },
+                                Err(e) => {
+                                    eprintln!("Search request failed: {e}");
+                                    menu_default = 8;
+                                }
+                            }
+                        }
+                    }
+                    Some(9) => {
+                        // Add to watchlist
+                        self.state.record(&series, &current);
+                        if let Err(e) = state::save(&self.state) {
+                            eprintln!("Warning: could not save watchlist: {e}");
+                        } else {
+                            println!(
+                                "✓ Saved \"{}\" ({}) to watchlist",
+                                series.title,
+                                current.display()
+                            );
+                        }
+                        menu_default = 9;
+                    }
+                    Some(10) => {
+                        // Toggle auto-next
+                        self.opts.auto = !self.opts.auto;
+                        println!(
+                            "Auto-next is now {}",
+                            if self.opts.auto {
+                                "ON (Episodes will autoplay consecutively)"
+                            } else {
+                                "OFF"
+                            }
+                        );
+                        menu_default = 10;
+                    }
+                    _ => {
+                        // Quit (Some(11) or None/Esc)
+                        break None;
                     }
                 }
-                Some(1) => {
-                    if let Some(previous) = self.previous(&series, &current)? {
-                        current = previous;
-                    } else {
-                        println!("No earlier episode found.");
-                        break;
-                    }
+            };
+
+            match action {
+                Some(next_ep) => {
+                    current = next_ep;
                 }
-                Some(2) => {}
-                Some(3) => current = self.select_episode(&series)?,
-                _ => break,
+                None => {
+                    break;
+                }
             }
         }
         Ok(())
