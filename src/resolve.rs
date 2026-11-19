@@ -19,37 +19,55 @@ static VIDMOLY_SOURCES: LazyLock<Regex> = LazyLock::new(|| {
 static JS_BOUNCE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"window\.location\.href\s*=\s*["']([^"']+)["']"#).expect("valid regex")
 });
+static VOE_SCRIPT_SEL: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("script[type='application/json']").expect("valid selector"));
 
 fn rot13(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        out.push(match c {
             'a'..='z' => char::from_u32(((c as u32 - 97 + 13) % 26) + 97).unwrap_or(c),
             'A'..='Z' => char::from_u32(((c as u32 - 65 + 13) % 26) + 65).unwrap_or(c),
             _ => c,
-        })
-        .collect()
+        });
+    }
+    out
+}
+
+fn strip_voe_junk(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len() {
+            let pair = &bytes[i..i + 2];
+            if matches!(pair, b"@$" | b"^^" | b"~@" | b"%?" | b"*~" | b"!!" | b"#&") {
+                i += 2;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    // Safety: junk sequences are purely 2-byte ASCII and input is valid UTF-8.
+    unsafe { String::from_utf8_unchecked(out) }
 }
 
 fn decode_voe(blob: &str) -> Option<String> {
     let envelope: Value = serde_json::from_str(blob).ok()?;
-    let encoded = match envelope {
-        Value::Array(items) => items.first()?.as_str()?.to_owned(),
-        Value::String(s) => s,
+    let encoded = match &envelope {
+        Value::Array(items) => items.first()?.as_str()?,
+        Value::String(s) => s.as_str(),
         _ => return None,
     };
-    let mut transformed = rot13(&encoded);
-    for junk in ["@$", "^^", "~@", "%?", "*~", "!!", "#&"] {
-        transformed = transformed.replace(junk, "");
-    }
-    let shifted = STANDARD.decode(transformed).ok()?;
+    let transformed = strip_voe_junk(&rot13(encoded));
+    let mut shifted = STANDARD.decode(transformed).ok()?;
     // Host markup encodes base64 ASCII after a reversible character shift.
-    let reversed = shifted
-        .iter()
-        .map(|b| b.checked_sub(3))
-        .collect::<Option<Vec<_>>>()?;
-    let reversed = String::from_utf8(reversed).ok()?;
-    let inner = reversed.chars().rev().collect::<String>();
-    let decoded = STANDARD.decode(inner).ok()?;
+    for b in &mut shifted {
+        *b = b.checked_sub(3)?;
+    }
+    shifted.reverse();
+    let decoded = STANDARD.decode(&shifted).ok()?;
     let payload: Value = serde_json::from_slice(&decoded).ok()?;
     payload
         .get("source")
@@ -62,9 +80,8 @@ fn decode_voe(blob: &str) -> Option<String> {
 pub fn voe_url(markup: &str) -> Option<String> {
     // Parse actual script nodes rather than trying to tokenize HTML with a regex.
     // This only reads publicly delivered page data and does not run JavaScript.
-    let selector = Selector::parse("script[type='application/json']").ok()?;
     let document = Html::parse_document(markup);
-    document.select(&selector).find_map(|node| {
+    document.select(&VOE_SCRIPT_SEL).find_map(|node| {
         let payload = node.text().collect::<String>();
         decode_voe(payload.trim())
     })
@@ -89,8 +106,7 @@ fn origin(url: &Url) -> String {
 fn extract(host: &Host, network: &Network, ua: &str) -> Result<Option<Stream>> {
     let url = Url::parse(&host.url)?;
     let (mut body, mut location) = network.page(&url, Some(network.root().as_str()))?;
-    let name = host.name.to_ascii_lowercase();
-    if name == "voe" {
+    if host.name.eq_ignore_ascii_case("voe") {
         for _ in 0..4 {
             let Some(next) = bounce_url(&body) else { break };
             let address = location.join(&next)?;
@@ -104,7 +120,7 @@ fn extract(host: &Host, network: &Network, ua: &str) -> Result<Option<Stream>> {
             user_agent: ua.to_owned(),
         }));
     }
-    if name == "vidmoly" {
+    if host.name.eq_ignore_ascii_case("vidmoly") {
         return Ok(vidmoly_url(&body).map(|url| Stream {
             url,
             referer: Some(origin(&location)),
@@ -115,7 +131,7 @@ fn extract(host: &Host, network: &Network, ua: &str) -> Result<Option<Stream>> {
 }
 
 pub fn known_host(host: &Host) -> bool {
-    matches!(host.name.to_ascii_lowercase().as_str(), "voe" | "vidmoly")
+    host.name.eq_ignore_ascii_case("voe") || host.name.eq_ignore_ascii_case("vidmoly")
 }
 
 pub fn ordered_languages(hosts: &[Host], priority: &[String]) -> Vec<String> {
@@ -148,7 +164,7 @@ pub fn choose_hosts(
             .unwrap_or(usize::MAX);
         let n = priority
             .iter()
-            .position(|s| s == &host.name.to_ascii_lowercase())
+            .position(|s| s.eq_ignore_ascii_case(&host.name))
             .unwrap_or(usize::MAX);
         (l, n)
     });

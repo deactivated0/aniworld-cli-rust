@@ -17,12 +17,11 @@ pub struct Episode {
 
 impl Episode {
     pub fn display(&self) -> String {
-        let code = if self.season == 0 {
-            format!("Movie {:02}", self.number)
+        if self.season == 0 {
+            format!("Movie {:02}  {}", self.number, self.title)
         } else {
-            format!("S{:02}E{:02}", self.season, self.number)
-        };
-        format!("{code}  {}", self.title)
+            format!("S{:02}E{:02}  {}", self.season, self.number, self.title)
+        }
     }
 }
 

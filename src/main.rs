@@ -8,7 +8,9 @@ mod state;
 
 use std::{
     collections::HashMap,
+    fmt::Write as _,
     io::{self, Write},
+    sync::LazyLock,
 };
 
 use anyhow::{Context, Result, bail};
@@ -91,21 +93,24 @@ pub const AFTER_PLAYBACK_ROWS: &[MenuRow] = &[
     MenuRow::Action("Quit"),
 ];
 
-fn run_after_playback_menu(default_action: Option<&str>) -> Result<Option<&'static str>> {
-    let term = console::Term::stderr();
-    if !term.is_term() {
-        return Ok(None);
-    }
-
-    let selectable: Vec<(usize, &'static str)> = AFTER_PLAYBACK_ROWS
+static SELECTABLE_ACTIONS: LazyLock<Vec<(usize, &'static str)>> = LazyLock::new(|| {
+    AFTER_PLAYBACK_ROWS
         .iter()
         .enumerate()
         .filter_map(|(idx, row)| match row {
             MenuRow::Action(name) => Some((idx, *name)),
             _ => None,
         })
-        .collect();
+        .collect()
+});
 
+fn run_after_playback_menu(default_action: Option<&str>) -> Result<Option<&'static str>> {
+    let term = console::Term::stderr();
+    if !term.is_term() {
+        return Ok(None);
+    }
+
+    let selectable = SELECTABLE_ACTIONS.as_slice();
     if selectable.is_empty() {
         return Ok(None);
     }
@@ -115,6 +120,7 @@ fn run_after_playback_menu(default_action: Option<&str>) -> Result<Option<&'stat
         .unwrap_or(0);
 
     let mut scroll_top = 0;
+    let mut frame_buf = String::with_capacity(1024);
     term.hide_cursor()?;
 
     loop {
@@ -134,8 +140,9 @@ fn run_after_playback_menu(default_action: Option<&str>) -> Result<Option<&'stat
 
         let visible_end = (scroll_top + max_visible).min(AFTER_PLAYBACK_ROWS.len());
 
+        frame_buf.clear();
         let mut lines_rendered = 0;
-        term.write_line("? After playback ›")?;
+        frame_buf.push_str("? After playback ›\n");
         lines_rendered += 1;
 
         for (i, row) in AFTER_PLAYBACK_ROWS[scroll_top..visible_end]
@@ -145,21 +152,22 @@ fn run_after_playback_menu(default_action: Option<&str>) -> Result<Option<&'stat
             let actual_idx = scroll_top + i;
             match row {
                 MenuRow::Header(h) => {
-                    term.write_line(&format!("  \x1b[38;5;244m{}\x1b[0m", h))?;
+                    let _ = writeln!(frame_buf, "  \x1b[38;5;244m{}\x1b[0m", h);
                 }
                 MenuRow::Blank => {
-                    term.write_line("")?;
+                    frame_buf.push('\n');
                 }
                 MenuRow::Action(label) => {
                     if actual_idx == current_row {
-                        term.write_line(&format!("\x1b[1;36m❯ {}\x1b[0m", label))?;
+                        let _ = writeln!(frame_buf, "\x1b[1;36m❯ {}\x1b[0m", label);
                     } else {
-                        term.write_line(&format!("  {}", label))?;
+                        let _ = writeln!(frame_buf, "  {}", label);
                     }
                 }
             }
             lines_rendered += 1;
         }
+        term.write_str(&frame_buf)?;
         term.flush()?;
 
         let key = term.read_key()?;

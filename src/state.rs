@@ -1,11 +1,36 @@
 //! Compatible with the Python client's version-1 state.json format.
-use std::{collections::BTreeMap, env, fs, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    io::{BufReader, BufWriter},
+    path::PathBuf,
+    sync::LazyLock,
+};
 
 use anyhow::{Context, Result};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{Episode, Progress, Series};
+
+static DEFAULT_STATE_FILE: LazyLock<PathBuf> = LazyLock::new(|| {
+    #[cfg(target_os = "windows")]
+    {
+        let home = env::var_os("APPDATA")
+            .or_else(|| env::var_os("USERPROFILE"))
+            .unwrap_or_default();
+        PathBuf::from(home).join("aniworld-cli").join("state.json")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let home = env::var_os("HOME").unwrap_or_default();
+        let xdg = env::var_os("XDG_CONFIG_HOME")
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(home).join(".config"));
+        xdg.join("aniworld-cli").join("state.json")
+    }
+});
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct State {
@@ -35,29 +60,16 @@ pub fn location() -> PathBuf {
     if let Some(dir) = env::var_os("ANIWORLD_STATE_DIR").filter(|s| !s.is_empty()) {
         return PathBuf::from(dir).join("state.json");
     }
-    #[cfg(target_os = "windows")]
-    {
-        let home = env::var_os("APPDATA")
-            .or_else(|| env::var_os("USERPROFILE"))
-            .unwrap_or_default();
-        PathBuf::from(home).join("aniworld-cli").join("state.json")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = env::var_os("HOME").unwrap_or_default();
-        let xdg = env::var_os("XDG_CONFIG_HOME")
-            .filter(|s| !s.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from(home).join(".config"));
-        xdg.join("aniworld-cli").join("state.json")
-    }
+    DEFAULT_STATE_FILE.clone()
 }
 
 pub fn load() -> State {
-    fs::read_to_string(location())
-        .ok()
-        .and_then(|s| serde_json::from_str::<State>(&s).ok())
-        .unwrap_or_default()
+    let path = location();
+    let Ok(file) = fs::File::open(&path) else {
+        return State::default();
+    };
+    let reader = BufReader::new(file);
+    serde_json::from_reader(reader).unwrap_or_default()
 }
 
 pub fn save(state: &State) -> Result<()> {
@@ -65,8 +77,11 @@ pub fn save(state: &State) -> Result<()> {
     let directory = file.parent().context("Invalid state location")?;
     fs::create_dir_all(directory)?;
     let temp = file.with_extension("json.tmp");
-    let serialized = serde_json::to_vec_pretty(state)?;
-    fs::write(&temp, serialized).context("Could not write temporary state")?;
+    {
+        let f = fs::File::create(&temp).context("Could not create temporary state file")?;
+        let writer = BufWriter::new(f);
+        serde_json::to_writer_pretty(writer, state).context("Could not serialize state")?;
+    }
     fs::rename(temp, file).context("Could not atomically replace state")?;
     Ok(())
 }
@@ -106,7 +121,7 @@ impl State {
             .iter()
             .map(|(k, v)| (k.to_owned(), v.clone()))
             .collect::<Vec<_>>();
-        entries.sort_by(|a, b| b.1.updated.cmp(&a.1.updated));
+        entries.sort_unstable_by(|a, b| b.1.updated.cmp(&a.1.updated));
         entries
     }
 }

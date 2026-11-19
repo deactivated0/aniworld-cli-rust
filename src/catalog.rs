@@ -1,5 +1,8 @@
 //! AniWorld HTML and JSON interpretation. Pure functions make site changes testable.
-use std::collections::{BTreeMap, HashSet};
+use std::{
+    collections::{BTreeMap, HashSet},
+    sync::LazyLock,
+};
 
 use anyhow::{Context, Result};
 use scraper::{Html, Selector};
@@ -7,19 +10,45 @@ use url::Url;
 
 use crate::model::{Episode, Host, Series};
 
-pub fn plain_text(html: &str) -> String {
-    Html::parse_fragment(html)
-        .root_element()
-        .text()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+static SEL_SERIES_TITLE: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("h1[itemprop='name'], .series-title h1").expect("valid selector")
+});
+static SEL_SEASONS_LINKS: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("#stream > ul:first-of-type a[href]").expect("valid selector")
+});
+static SEL_EPISODES_ROWS: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("table.seasonEpisodesList tbody tr[data-episode-id]").expect("valid selector")
+});
+static SEL_EPISODES_LINKS: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("td a[href]").expect("valid selector"));
+static SEL_EPISODES_TITLES: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("td.seasonEpisodeTitle").expect("valid selector"));
+static SEL_EPISODES_NAV: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("#stream a[data-episode-id][href]").expect("valid selector"));
+static SEL_HOSTS_ITEMS: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("li[data-link-target][data-lang-key]").expect("valid selector")
+});
+static SEL_HOSTS_LABELS: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("h4").expect("valid selector"));
+
+fn stream_clean_text<'a>(iter: impl IntoIterator<Item = &'a str>) -> String {
+    let mut out = String::new();
+    let mut first = true;
+    for chunk in iter {
+        for word in chunk.split_whitespace() {
+            if !first {
+                out.push(' ');
+            }
+            out.push_str(word);
+            first = false;
+        }
+    }
+    out
 }
 
-fn select(pattern: &str) -> Selector {
-    Selector::parse(pattern).expect("internal CSS selector must be valid")
+pub fn plain_text(html: &str) -> String {
+    let fragment = Html::parse_fragment(html);
+    stream_clean_text(fragment.root_element().text())
 }
 
 fn resolved_url(root: &Url, href: &str) -> Option<Url> {
@@ -35,8 +64,8 @@ pub fn search_results(body: &str, root: &Url) -> Result<Vec<Series>> {
         .as_array()
         .or_else(|| data.get("results").and_then(|v| v.as_array()))
         .context("Search response is not an array")?;
-    let mut seen = HashSet::new();
-    let mut result = Vec::new();
+    let mut seen = HashSet::with_capacity(items.len());
+    let mut result = Vec::with_capacity(items.len());
     for item in items {
         let (Some(title), Some(href)) = (
             item.get("title").and_then(|v| v.as_str()),
@@ -71,19 +100,16 @@ pub fn search_results(body: &str, root: &Url) -> Result<Vec<Series>> {
 
 pub fn series_title(html: &str) -> Option<String> {
     let doc = Html::parse_document(html);
-    let sel = select("h1[itemprop='name'], .series-title h1");
-    doc.select(&sel)
+    doc.select(&SEL_SERIES_TITLE)
         .next()
-        .map(|n| n.text().collect::<Vec<_>>().join(" "))
-        .map(|t| t.split_whitespace().collect::<Vec<_>>().join(" "))
+        .map(|n| stream_clean_text(n.text()))
         .filter(|s| !s.is_empty())
 }
 
 pub fn seasons(html: &str) -> Vec<u32> {
     let doc = Html::parse_document(html);
-    let links = select("#stream > ul:first-of-type a[href]");
     let mut order = BTreeMap::new();
-    for link in doc.select(&links) {
+    for link in doc.select(&SEL_SEASONS_LINKS) {
         let Some(href) = link.value().attr("href") else {
             continue;
         };
@@ -115,20 +141,16 @@ fn id_from_path(url: &str) -> Option<(u32, u32)> {
     if season == 0 {
         return Some((0, number));
     }
-    let (season_raw, _) = path.split("/staffel-").nth(1)?.split_once('/')?;
+    let (season_raw, _) = path.split_once("/staffel-")?.1.split_once('/')?;
     let s = season_raw.parse::<u32>().ok()?;
     Some((s, number))
 }
 
 pub fn episodes(html: &str, base: &Url, selected_season: u32) -> Vec<Episode> {
     let doc = Html::parse_document(html);
-    let rows = select("table.seasonEpisodesList tbody tr[data-episode-id]");
-    let links = select("td a[href]");
-    let titles = select("td.seasonEpisodeTitle");
-    let nav = select("#stream a[data-episode-id][href]");
     let mut by_number = BTreeMap::<u32, Episode>::new();
-    for row in doc.select(&rows) {
-        let Some(link) = row.select(&links).next() else {
+    for row in doc.select(&SEL_EPISODES_ROWS) {
+        let Some(link) = row.select(&SEL_EPISODES_LINKS).next() else {
             continue;
         };
         let Some(href) = link.value().attr("href") else {
@@ -144,13 +166,10 @@ pub fn episodes(html: &str, base: &Url, selected_season: u32) -> Vec<Episode> {
             continue;
         };
         let title = row
-            .select(&titles)
+            .select(&SEL_EPISODES_TITLES)
             .next()
-            .map(|e| e.text().collect::<Vec<_>>().join(" "))
-            .unwrap_or_default()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ");
+            .map(|e| stream_clean_text(e.text()))
+            .unwrap_or_default();
         let title = if title.is_empty() {
             format!("Episode {number}")
         } else {
@@ -167,7 +186,7 @@ pub fn episodes(html: &str, base: &Url, selected_season: u32) -> Vec<Episode> {
         );
     }
     if by_number.is_empty() {
-        for link in doc.select(&nav) {
+        for link in doc.select(&SEL_EPISODES_NAV) {
             let Some(href) = link.value().attr("href") else {
                 continue;
             };
@@ -205,11 +224,9 @@ fn language_key(key: &str) -> String {
 
 pub fn hosts(html: &str, base: &Url) -> Vec<Host> {
     let doc = Html::parse_document(html);
-    let items = select("li[data-link-target][data-lang-key]");
-    let labels = select("h4");
     let mut found = Vec::new();
     let mut seen = HashSet::new();
-    for li in doc.select(&items) {
+    for li in doc.select(&SEL_HOSTS_ITEMS) {
         let Some(href) = li.value().attr("data-link-target") else {
             continue;
         };
@@ -220,12 +237,10 @@ pub fn hosts(html: &str, base: &Url) -> Vec<Host> {
             continue;
         };
         let name = li
-            .select(&labels)
+            .select(&SEL_HOSTS_LABELS)
             .next()
-            .map(|node| node.text().collect::<Vec<_>>().join(" "))
-            .unwrap_or_default()
-            .trim()
-            .to_owned();
+            .map(|node| stream_clean_text(node.text()))
+            .unwrap_or_default();
         if name.is_empty() {
             continue;
         }

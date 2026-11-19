@@ -14,6 +14,20 @@ pub struct Network {
     base: Url,
 }
 
+fn is_cloudflare_challenge(status: StatusCode, data: &str) -> bool {
+    if !matches!(status.as_u16(), 403 | 503) {
+        return false;
+    }
+    const TAGS: &[&str] = &[
+        "just a moment",
+        "cf-chl",
+        "challenge-platform",
+        "cf-browser-verification",
+    ];
+    let lower = data.to_ascii_lowercase();
+    TAGS.iter().any(|tag| lower.contains(tag))
+}
+
 impl Network {
     pub fn new(base: &str, ua: &str) -> Result<Self> {
         let root = Url::parse(base).context("Invalid ANIWorld base URL")?;
@@ -42,7 +56,7 @@ impl Network {
 
     pub fn page(&self, url: &Url, referer: Option<&str>) -> Result<(String, Url)> {
         for attempt in 0..3u64 {
-            let mut request = self.client.get(url.clone());
+            let mut request = self.client.get(url.as_str());
             if let Some(v) = referer {
                 request = request.header(REFERER, v);
             }
@@ -55,17 +69,7 @@ impl Network {
                         continue;
                     }
                     let data = response.text()?;
-                    let maybe_challenge = (status == StatusCode::FORBIDDEN
-                        || status == StatusCode::SERVICE_UNAVAILABLE)
-                        && [
-                            "just a moment",
-                            "cf-chl",
-                            "challenge-platform",
-                            "cf-browser-verification",
-                        ]
-                        .iter()
-                        .any(|tag| data.to_ascii_lowercase().contains(tag));
-                    if maybe_challenge {
+                    if is_cloudflare_challenge(status, &data) {
                         bail!(
                             "Cloudflare challenge detected at {final_url}; this program does not bypass CAPTCHA"
                         )
@@ -86,18 +90,14 @@ impl Network {
         let endpoint = self.base.join("/ajax/search")?;
         let response = self
             .client
-            .post(endpoint.clone())
+            .post(endpoint.as_str())
             .header(REFERER, self.base.as_str())
             .form(&[("keyword", query)])
             .send()
             .context("Site search request failed")?;
         let code = response.status();
         let text = response.text()?;
-        if matches!(code.as_u16(), 403 | 503)
-            && ["just a moment", "cf-chl", "challenge-platform"]
-                .iter()
-                .any(|tag| text.to_ascii_lowercase().contains(tag))
-        {
+        if is_cloudflare_challenge(code, &text) {
             bail!(
                 "AniWorld requested a Cloudflare challenge; automated CAPTCHA bypass is not supported"
             );
@@ -110,14 +110,14 @@ impl Network {
     }
 
     fn playlist(&self, stream_url: &Url, referer: Option<&str>) -> Result<String> {
-        let mut request = self.client.get(stream_url.clone());
+        let mut request = self.client.get(stream_url.as_str());
         if let Some(r) = referer {
             request = request.header(REFERER, r);
         }
         let mut res = request.send()?;
         anyhow::ensure!(res.status().is_success(), "Playlist HTTP {}", res.status());
         // Avoid accidentally loading unbounded bodies into memory.
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(4096);
         res.by_ref().take(1_048_577).read_to_end(&mut out)?;
         anyhow::ensure!(
             out.len() <= 1_048_576,
@@ -130,21 +130,27 @@ impl Network {
         self.check_stream(stream).unwrap_or(false)
     }
 
+    fn path_has_m3u8(path: &str) -> bool {
+        path.as_bytes()
+            .windows(5)
+            .any(|w| w.eq_ignore_ascii_case(b".m3u8"))
+    }
+
     fn check_stream(&self, stream: &crate::model::Stream) -> Result<bool> {
         let mut current = Url::parse(&stream.url)?;
-        if current.path().to_ascii_lowercase().contains(".m3u8") {
+        if Self::path_has_m3u8(current.path()) {
             for _ in 0..3 {
                 let body = self.playlist(&current, stream.referer.as_deref())?;
                 let Some(next) = first_media_entry(&body) else {
                     return Ok(true);
                 };
                 current = current.join(&next)?;
-                if !current.path().to_ascii_lowercase().contains(".m3u8") {
+                if !Self::path_has_m3u8(current.path()) {
                     break;
                 }
             }
         }
-        let mut request = self.client.get(current).header(RANGE, "bytes=0-1");
+        let mut request = self.client.get(current.as_str()).header(RANGE, "bytes=0-1");
         if let Some(r) = &stream.referer {
             request = request.header(REFERER, r);
         }

@@ -69,10 +69,9 @@ pub fn mpv_arguments(
     ep: &Episode,
     extra: &[String],
 ) -> Vec<String> {
-    let mut args = vec![
-        "--no-terminal".to_owned(),
-        format!("--user-agent={}", stream.user_agent),
-    ];
+    let mut args = Vec::with_capacity(6 + extra.len());
+    args.push("--no-terminal".to_owned());
+    args.push(format!("--user-agent={}", stream.user_agent));
     if let Some(referrer) = &stream.referer {
         args.push(format!("--referrer={referrer}"));
     }
