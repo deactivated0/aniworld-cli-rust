@@ -24,7 +24,8 @@ Unlike heavy script-based alternatives or bloated electron wrappers, `aniworld-c
 ### 🌟 Key Features
 
 - **🚀 Native & Ultra-Fast:** Built with Rust 2024 edition for instant startup and negligible memory footprint.
-- **🔍 Interactive Fuzzy Search:** Fast terminal menu powered by `dialoguer` to browse series, movies, seasons, and episodes.
+- **🔍 Interactive Search & Catalog:** Fast terminal menu powered by `dialoguer` to search anime titles, explore the complete anime catalog, and browse series, movies, seasons, and episodes.
+- **📚 Anime Catalog & Genre Browsing:** Explore AniWorld's vast library alphabetically (`A-Z`, `0-9`), browse popular series, or filter through ~30 curated anime genres (Action, Romance, Isekai, Comedy, Fantasy, etc.) with `-c` / `--catalog` and `-g` / `--genre`.
 - **🎧 Multi-Language Support:** Instant support for German Dub (`ger-dub`), German Sub (`ger-sub`), and English Sub (`eng-sub`) with customizable language fallback.
 - **🔄 Smart Host Selection & Fallback:** Automatically switches between supported providers (VOE, Vidmoly) with stream validation.
 - **📺 Seamless MPV Playback:** Direct process execution without shell interpolation for maximum security; supports custom MPV flags, shaders (e.g. Anime4K), and configs.
@@ -326,8 +327,22 @@ cargo install --path .
 ### Basic Commands
 
 ```bash
-# Interactive search and playback
+# Interactive main menu (Search, Catalog, Genres, Watchlist, Favorites)
+aniworld
+
+# Search anime titles directly
 aniworld "frieren"
+
+# Browse the complete anime catalog (A-Z, 0-9, Popular, Genres, Search)
+aniworld -c
+aniworld --catalog
+
+# Browse anime by genre directly (e.g. Action, Romance, Comedy, Fantasy)
+aniworld -g "Action"
+aniworld -g "Romance"
+
+# Browse all genres interactively
+aniworld -g ""
 
 # Binge the current season automatically
 aniworld "frieren" --auto
@@ -366,6 +381,8 @@ Resolved via VOE (ger-dub)
   Select season
   Jump to episode
   Search another anime
+  Browse anime catalog
+  Browse by genre
   Continue another anime
 
   ── STREAM & LANGUAGE ─────────────

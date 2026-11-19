@@ -45,6 +45,8 @@ pub const AFTER_PLAYBACK_ROWS: &[MenuRow] = &[
     MenuRow::Action("Select season"),
     MenuRow::Action("Jump to episode"),
     MenuRow::Action("Search another anime"),
+    MenuRow::Action("Browse anime catalog"),
+    MenuRow::Action("Browse by genre"),
     MenuRow::Action("Continue another anime"),
     MenuRow::Blank,
     MenuRow::Header("── STREAM & LANGUAGE ─────────────"),
@@ -384,54 +386,24 @@ impl App {
         Ok(None)
     }
 
-    fn choose_series(&self) -> Result<Series> {
-        if self.opts.watchlist {
-            let entries = self.state.recent();
-            anyhow::ensure!(
-                !entries.is_empty(),
-                "Watchlist empty: start watching a series first"
-            );
-            let names = entries
-                .iter()
-                .map(|(_, p)| format!("{} (S{:02}E{:02})", p.title, p.season, p.number))
-                .collect::<Vec<_>>();
-            let index = self.pick_menu(
-                if self.german() {
-                    "Merkliste"
-                } else {
-                    "Watchlist"
-                },
-                &names,
-                0,
-            )?;
-            let (slug, saved) = &entries[index];
-            return Ok(Series {
-                title: saved.title.clone(),
-                slug: slug.clone(),
-                url: saved.url.clone(),
-            });
-        }
-        let query = if let Some(q) = &self.opts.query {
-            q.clone()
-        } else {
-            anyhow::ensure!(
-                !self.opts.no_menu && !self.opts.json,
-                "Supply a query for noninteractive mode"
-            );
-            print!(
-                "{}: ",
-                if self.german() {
-                    "Anime suchen"
-                } else {
-                    "Search anime"
-                }
-            );
-            io::stdout().flush()?;
-            let mut q = String::new();
-            io::stdin().read_line(&mut q)?;
-            q.trim().to_owned()
-        };
-        anyhow::ensure!(!query.trim().is_empty(), "Search query cannot be empty");
+    fn search_anime_interactive(&self) -> Result<Series> {
+        print!(
+            "{}: ",
+            if self.german() {
+                "Anime suchen"
+            } else {
+                "Search anime"
+            }
+        );
+        io::stdout().flush()?;
+        let mut q = String::new();
+        io::stdin().read_line(&mut q)?;
+        let q = q.trim();
+        anyhow::ensure!(!q.is_empty(), "Search query cannot be empty");
+        self.resolve_or_search(q)
+    }
+
+    fn resolve_or_search(&self, query: &str) -> Result<Series> {
         let query_trimmed = query.trim();
 
         // Direct URL detection (e.g. https://aniworld.to/anime/stream/frieren-beyond-journeys-end)
@@ -493,7 +465,7 @@ impl App {
         let labels = results.iter().map(|s| s.title.clone()).collect::<Vec<_>>();
         let index = self.pick_menu(
             if self.german() {
-                "Anime"
+                "Anime auswählen"
             } else {
                 "Choose series"
             },
@@ -501,6 +473,363 @@ impl App {
             0,
         )?;
         Ok(results[index].clone())
+    }
+
+    fn browse_catalog(&self) -> Result<Series> {
+        if self.opts.no_menu || self.opts.json {
+            return self.browse_popular();
+        }
+
+        let options = vec![
+            if self.german() {
+                "🔤 Alphabetisch durchsuchen (A-Z, 0-9)"
+            } else {
+                "🔤 Browse Alphabetically (A-Z, 0-9)"
+            }
+            .to_string(),
+            if self.german() {
+                "🔥 Beliebte Animes (Popular)"
+            } else {
+                "🔥 Popular Animes"
+            }
+            .to_string(),
+            if self.german() {
+                "🎭 Nach Genre durchsuchen"
+            } else {
+                "🎭 Browse by Genre"
+            }
+            .to_string(),
+            if self.german() {
+                "🔍 Anime suchen"
+            } else {
+                "🔍 Search anime by name"
+            }
+            .to_string(),
+        ];
+
+        let prompt = if self.german() {
+            "Anime-Katalog"
+        } else {
+            "Anime Catalog"
+        };
+        let choice = self.pick_menu(prompt, &options, 0)?;
+
+        match choice {
+            0 => self.browse_alphabet(),
+            1 => self.browse_popular(),
+            2 => self.browse_genres(None),
+            _ => self.search_anime_interactive(),
+        }
+    }
+
+    fn browse_alphabet(&self) -> Result<Series> {
+        let letters = vec![
+            "0-9", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P",
+            "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z",
+        ];
+        let labels = letters.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let prompt = if self.german() {
+            "Buchstabe wählen"
+        } else {
+            "Select letter"
+        };
+        let idx = self.pick_menu(prompt, &labels, 1)?;
+        let letter = letters[idx];
+
+        let path = format!("/katalog/{letter}");
+        let url = self.net.root().join(&path)?;
+        println!("⏳ Loading catalog for '{letter}'...");
+        let (html, _) = self.net.page(&url, None)?;
+        let animes = catalog::parse_catalog_page(&html, self.net.root());
+        anyhow::ensure!(!animes.is_empty(), "No anime found for letter '{letter}'");
+
+        if self.opts.no_menu || self.opts.json {
+            return Ok(animes[0].clone());
+        }
+
+        let mut titles = Vec::with_capacity(animes.len() + 1);
+        titles.push(format!("🔍 Filter / Search within '{letter}'"));
+        for s in &animes {
+            titles.push(s.title.clone());
+        }
+        let sel = self.pick_menu(
+            &format!("Animes ({letter}) - {} titles", animes.len()),
+            &titles,
+            1,
+        )?;
+        if sel == 0 {
+            print!("Filter within '{letter}': ");
+            io::stdout().flush()?;
+            let mut filter_input = String::new();
+            io::stdin().read_line(&mut filter_input)?;
+            let fi = filter_input.trim().to_lowercase();
+            let filtered: Vec<&Series> = animes
+                .iter()
+                .filter(|s| s.title.to_lowercase().contains(&fi))
+                .collect();
+            anyhow::ensure!(
+                !filtered.is_empty(),
+                "No anime matched '{fi}' under '{letter}'"
+            );
+            let filtered_titles = filtered.iter().map(|s| s.title.clone()).collect::<Vec<_>>();
+            let f_sel = self.pick_menu(&format!("Matches for '{fi}'"), &filtered_titles, 0)?;
+            Ok(filtered[f_sel].clone())
+        } else {
+            Ok(animes[sel - 1].clone())
+        }
+    }
+
+    fn browse_popular(&self) -> Result<Series> {
+        let url = self.net.root().join("/beliebte-animes")?;
+        println!("⏳ Loading popular animes...");
+        let (html, _) = self.net.page(&url, None)?;
+        let animes = catalog::parse_catalog_page(&html, self.net.root());
+        anyhow::ensure!(!animes.is_empty(), "No popular anime found");
+
+        if self.opts.no_menu || self.opts.json {
+            return Ok(animes[0].clone());
+        }
+
+        let titles = animes.iter().map(|s| s.title.clone()).collect::<Vec<_>>();
+        let sel = self.pick_menu(
+            &format!("Popular Animes - {} titles", animes.len()),
+            &titles,
+            0,
+        )?;
+        Ok(animes[sel].clone())
+    }
+
+    fn browse_genres(&self, direct_filter: Option<&str>) -> Result<Series> {
+        let url = self.net.root().join("/animes")?;
+        println!("⏳ Loading anime genres...");
+        let (html, _) = self.net.page(&url, None)?;
+        let genres = catalog::parse_genres(&html, self.net.root());
+        anyhow::ensure!(!genres.is_empty(), "No genres found on AniWorld");
+
+        let selected_genre = if let Some(filter) = direct_filter {
+            let filter_lower = filter.to_lowercase();
+            genres
+                .into_iter()
+                .find(|g| g.name.to_lowercase().contains(&filter_lower))
+                .context(format!("Genre matching '{filter}' not found"))?
+        } else {
+            let labels = genres
+                .iter()
+                .map(|g| format!("{} ({} animes)", g.name, g.animes.len()))
+                .collect::<Vec<_>>();
+            let idx = self.pick_menu(
+                if self.german() {
+                    "Genre auswählen"
+                } else {
+                    "Select Genre"
+                },
+                &labels,
+                0,
+            )?;
+            genres.into_iter().nth(idx).unwrap()
+        };
+
+        anyhow::ensure!(
+            !selected_genre.animes.is_empty(),
+            "No animes listed in genre '{}'",
+            selected_genre.name
+        );
+
+        if self.opts.no_menu || self.opts.json {
+            return Ok(selected_genre.animes[0].clone());
+        }
+
+        let mut titles = Vec::with_capacity(selected_genre.animes.len() + 1);
+        titles.push(format!(
+            "🔍 Filter / Search within '{}'",
+            selected_genre.name
+        ));
+        for s in &selected_genre.animes {
+            titles.push(s.title.clone());
+        }
+
+        let sel = self.pick_menu(
+            &format!(
+                "{} ({} titles)",
+                selected_genre.name,
+                selected_genre.animes.len()
+            ),
+            &titles,
+            1,
+        )?;
+
+        if sel == 0 {
+            print!("Filter {}: ", selected_genre.name);
+            io::stdout().flush()?;
+            let mut filter_input = String::new();
+            io::stdin().read_line(&mut filter_input)?;
+            let fi = filter_input.trim().to_lowercase();
+            let filtered: Vec<&Series> = selected_genre
+                .animes
+                .iter()
+                .filter(|s| s.title.to_lowercase().contains(&fi))
+                .collect();
+            anyhow::ensure!(
+                !filtered.is_empty(),
+                "No anime matched '{fi}' in genre '{}'",
+                selected_genre.name
+            );
+            let filtered_titles = filtered.iter().map(|s| s.title.clone()).collect::<Vec<_>>();
+            let f_sel = self.pick_menu(&format!("Matches for '{fi}'"), &filtered_titles, 0)?;
+            Ok(filtered[f_sel].clone())
+        } else {
+            Ok(selected_genre.animes[sel - 1].clone())
+        }
+    }
+
+    fn choose_series(&self) -> Result<Series> {
+        if self.opts.watchlist {
+            let entries = self.state.recent();
+            anyhow::ensure!(
+                !entries.is_empty(),
+                "Watchlist empty: start watching a series first"
+            );
+            let names = entries
+                .iter()
+                .map(|(_, p)| format!("{} (S{:02}E{:02})", p.title, p.season, p.number))
+                .collect::<Vec<_>>();
+            let index = self.pick_menu(
+                if self.german() {
+                    "Merkliste"
+                } else {
+                    "Watchlist"
+                },
+                &names,
+                0,
+            )?;
+            let (slug, saved) = &entries[index];
+            return Ok(Series {
+                title: saved.title.clone(),
+                slug: slug.clone(),
+                url: saved.url.clone(),
+            });
+        }
+
+        if self.opts.catalog {
+            return self.browse_catalog();
+        }
+
+        if let Some(genre) = &self.opts.genre {
+            return self.browse_genres(if genre.is_empty() { None } else { Some(genre) });
+        }
+
+        if let Some(q) = &self.opts.query {
+            return self.resolve_or_search(q);
+        }
+
+        anyhow::ensure!(
+            !self.opts.no_menu && !self.opts.json,
+            "Supply a query for noninteractive mode"
+        );
+
+        let main_choices = vec![
+            if self.german() {
+                "🔍 Anime suchen"
+            } else {
+                "🔍 Search animes"
+            }
+            .to_string(),
+            if self.german() {
+                "📚 Anime-Katalog (A-Z / Beliebt)"
+            } else {
+                "📚 Anime Catalog (A-Z / Popular)"
+            }
+            .to_string(),
+            if self.german() {
+                "🎭 Nach Genre durchsuchen"
+            } else {
+                "🎭 Browse by Genre"
+            }
+            .to_string(),
+            if self.german() {
+                "📑 Merkliste öffnen"
+            } else {
+                "📑 Watchlist"
+            }
+            .to_string(),
+            if self.german() {
+                "★ Favoriten öffnen"
+            } else {
+                "★ Favorites"
+            }
+            .to_string(),
+            if self.german() {
+                "📜 Verlauf anzeigen"
+            } else {
+                "📜 Watch History"
+            }
+            .to_string(),
+        ];
+
+        let prompt = if self.german() {
+            "AniWorld Hauptmenü"
+        } else {
+            "AniWorld Menu"
+        };
+        let choice = self.pick_menu(prompt, &main_choices, 0)?;
+
+        match choice {
+            0 => self.search_anime_interactive(),
+            1 => self.browse_catalog(),
+            2 => self.browse_genres(None),
+            3 => {
+                let entries = self.state.recent();
+                anyhow::ensure!(!entries.is_empty(), "Watchlist is empty");
+                let names = entries
+                    .iter()
+                    .map(|(_, p)| format!("{} (S{:02}E{:02})", p.title, p.season, p.number))
+                    .collect::<Vec<_>>();
+                let idx = self.pick_menu("Watchlist", &names, 0)?;
+                let (slug, saved) = &entries[idx];
+                Ok(Series {
+                    title: saved.title.clone(),
+                    slug: slug.clone(),
+                    url: saved.url.clone(),
+                })
+            }
+            4 => {
+                anyhow::ensure!(!self.state.favorites.is_empty(), "No favorites saved yet");
+                let favs = self.state.favorites.clone();
+                let idx = self.pick_menu("Favorites", &favs, 0)?;
+                let slug = &favs[idx];
+                let title = self
+                    .state
+                    .series
+                    .get(slug)
+                    .map(|p| p.title.clone())
+                    .unwrap_or_else(|| slug.clone());
+                let url = format!(
+                    "{}/anime/stream/{slug}",
+                    self.net.root().as_str().trim_end_matches('/')
+                );
+                Ok(Series {
+                    title,
+                    slug: slug.clone(),
+                    url,
+                })
+            }
+            _ => {
+                let items = self.state.recent();
+                if items.is_empty() {
+                    println!("No watch history yet.");
+                } else {
+                    println!("\n📜 Watch History:");
+                    for (_, p) in &items {
+                        println!(
+                            "  {}  S{:02}E{:02}  {}",
+                            p.updated, p.season, p.number, p.title
+                        );
+                    }
+                    println!();
+                }
+                self.search_anime_interactive()
+            }
+        }
     }
 
     fn pick_menu(&self, prompt: &str, options: &[String], default: usize) -> Result<usize> {
@@ -877,67 +1206,48 @@ impl App {
                             println!("Invalid episode number.");
                         }
                     }
-                    Some("Search another anime") => {
-                        print!(
-                            "{}: ",
-                            if self.german() {
-                                "Anime suchen"
-                            } else {
-                                "Search anime"
+                    Some("Search another anime") => match self.search_anime_interactive() {
+                        Ok(s) => match self.select_episode(&s, None) {
+                            Ok(ep) => {
+                                series = s;
+                                remembered_language = None;
+                                forced_hoster = None;
+                                forced_language = None;
+                                current = ep;
+                                break_to_play = true;
                             }
-                        );
-                        io::stdout().flush()?;
-                        let mut q = String::new();
-                        io::stdin().read_line(&mut q)?;
-                        let q = q.trim();
-                        if !q.is_empty() {
-                            let mut results = self
-                                .net
-                                .get_search(q)
-                                .ok()
-                                .and_then(|resp| {
-                                    catalog::search_results(&resp, self.net.root()).ok()
-                                })
-                                .unwrap_or_default();
-                            if results.is_empty() {
-                                let slug = q.trim_matches('/');
-                                if let Ok(direct) =
-                                    self.net.root().join(&format!("/anime/stream/{slug}"))
-                                {
-                                    if let Ok((html, final_url)) = self.net.page(&direct, None) {
-                                        if let Some(title) = catalog::series_title(&html) {
-                                            results.push(Series {
-                                                title,
-                                                slug: slug.to_string(),
-                                                url: final_url.to_string(),
-                                            });
-                                        }
-                                    }
-                                }
+                            Err(e) => eprintln!("Could not select episode: {e}"),
+                        },
+                        Err(e) => eprintln!("Search error: {e}"),
+                    },
+                    Some("Browse anime catalog") => match self.browse_catalog() {
+                        Ok(s) => match self.select_episode(&s, None) {
+                            Ok(ep) => {
+                                series = s;
+                                remembered_language = None;
+                                forced_hoster = None;
+                                forced_language = None;
+                                current = ep;
+                                break_to_play = true;
                             }
-                            if !results.is_empty() {
-                                let labels =
-                                    results.iter().map(|s| s.title.clone()).collect::<Vec<_>>();
-                                if let Ok(idx) = self.pick_menu("Choose series", &labels, 0) {
-                                    series = results[idx].clone();
-                                    match self.select_episode(&series, None) {
-                                        Ok(ep) => {
-                                            remembered_language = None;
-                                            forced_hoster = None;
-                                            forced_language = None;
-                                            current = ep;
-                                            break_to_play = true;
-                                        }
-                                        Err(e) => {
-                                            eprintln!("Could not select episode: {e}")
-                                        }
-                                    }
-                                }
-                            } else {
-                                println!("No anime series found matching '{q}'.");
+                            Err(e) => eprintln!("Could not select episode: {e}"),
+                        },
+                        Err(e) => eprintln!("Catalog error: {e}"),
+                    },
+                    Some("Browse by genre") => match self.browse_genres(None) {
+                        Ok(s) => match self.select_episode(&s, None) {
+                            Ok(ep) => {
+                                series = s;
+                                remembered_language = None;
+                                forced_hoster = None;
+                                forced_language = None;
+                                current = ep;
+                                break_to_play = true;
                             }
-                        }
-                    }
+                            Err(e) => eprintln!("Could not select episode: {e}"),
+                        },
+                        Err(e) => eprintln!("Genre browse error: {e}"),
+                    },
                     Some("Continue another anime") => {
                         let recent = self.state.recent();
                         if recent.is_empty() {
@@ -1298,12 +1608,18 @@ impl App {
                             let favs = self.state.favorites.clone();
                             if let Ok(idx) = self.pick_menu("Favorites", &favs, 0) {
                                 let slug = &favs[idx];
+                                let title = self
+                                    .state
+                                    .series
+                                    .get(slug)
+                                    .map(|p| p.title.clone())
+                                    .unwrap_or_else(|| slug.clone());
                                 let url = format!(
                                     "{}/anime/stream/{slug}",
                                     self.net.root().as_str().trim_end_matches('/')
                                 );
                                 series = Series {
-                                    title: slug.clone(),
+                                    title,
                                     slug: slug.clone(),
                                     url,
                                 };
@@ -1482,8 +1798,13 @@ fn run(opts: Options) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&data)?);
         return Ok(());
     }
-    if opts.no_menu && opts.query.is_none() && !opts.watchlist {
-        bail!("--no-menu requires a title or --watchlist");
+    if opts.no_menu
+        && opts.query.is_none()
+        && !opts.watchlist
+        && !opts.catalog
+        && opts.genre.is_none()
+    {
+        bail!("--no-menu requires a title, --watchlist, --catalog, or --genre");
     }
     App::new(opts)?.start()
 }

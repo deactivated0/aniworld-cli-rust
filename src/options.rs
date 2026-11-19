@@ -20,6 +20,14 @@ pub struct Options {
     #[arg(short = 'w', long)]
     pub watchlist: bool,
 
+    /// Open the anime catalog (browse by A-Z, genres, or popular)
+    #[arg(short = 'c', long)]
+    pub catalog: bool,
+
+    /// Browse animes by genre directly
+    #[arg(short = 'g', long)]
+    pub genre: Option<String>,
+
     /// Play remaining episodes in the selected season consecutively
     #[arg(long)]
     pub auto: bool,

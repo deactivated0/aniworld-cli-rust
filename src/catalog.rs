@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use scraper::{Html, Selector};
 use url::Url;
 
-use crate::model::{Episode, Host, Series};
+use crate::model::{Episode, Genre, Host, Series};
 
 static SEL_SERIES_TITLE: LazyLock<Selector> = LazyLock::new(|| {
     Selector::parse("h1[itemprop='name'], .series-title h1").expect("valid selector")
@@ -30,6 +30,18 @@ static SEL_HOSTS_ITEMS: LazyLock<Selector> = LazyLock::new(|| {
 });
 static SEL_HOSTS_LABELS: LazyLock<Selector> =
     LazyLock::new(|| Selector::parse("h4").expect("valid selector"));
+static SEL_CATALOG_ITEMS: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(".seriesListContainer a[href*='/anime/stream/']").expect("valid selector")
+});
+static SEL_CATALOG_TITLE: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("h3").expect("valid selector"));
+static SEL_GENRE_BLOCKS: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("div.genre").expect("valid selector"));
+static SEL_GENRE_TITLE: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse(".seriesGenreList h3, .genreTitle h3").expect("valid selector")
+});
+static SEL_GENRE_ANIME_LINKS: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("ul li a[href*='/anime/stream/']").expect("valid selector"));
 
 fn unescape_entities(s: &str) -> String {
     if !s.contains('&') {
@@ -295,11 +307,154 @@ pub fn hosts(html: &str, base: &Url) -> Vec<Host> {
     found
 }
 
+pub fn parse_catalog_page(html: &str, base: &Url) -> Vec<Series> {
+    let doc = Html::parse_document(html);
+    let mut animes = Vec::new();
+    let mut seen = HashSet::new();
+
+    for link in doc.select(&SEL_CATALOG_ITEMS) {
+        let Some(href) = link.value().attr("href") else {
+            continue;
+        };
+        let Some(url) = resolved_url(base, href) else {
+            continue;
+        };
+        let Some(relative) = url.path().strip_prefix("/anime/stream/") else {
+            continue;
+        };
+        let Some(slug) = relative.split('/').next() else {
+            continue;
+        };
+        if slug.is_empty() || !seen.insert(slug.to_string()) {
+            continue;
+        }
+
+        let title = link
+            .select(&SEL_CATALOG_TITLE)
+            .next()
+            .map(|h3| stream_clean_text(h3.text()))
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| {
+                link.value()
+                    .attr("title")
+                    .map(|t| {
+                        t.split(" stream online")
+                            .next()
+                            .unwrap_or(t)
+                            .trim()
+                            .to_string()
+                    })
+                    .unwrap_or_else(|| slug.to_string())
+            });
+
+        animes.push(Series {
+            title,
+            slug: slug.to_string(),
+            url: url.to_string(),
+        });
+    }
+
+    animes
+}
+
+pub fn parse_genres(html: &str, base: &Url) -> Vec<Genre> {
+    let doc = Html::parse_document(html);
+    let mut genres = Vec::new();
+
+    for block in doc.select(&SEL_GENRE_BLOCKS) {
+        let Some(title_elem) = block.select(&SEL_GENRE_TITLE).next() else {
+            continue;
+        };
+        let genre_name = stream_clean_text(title_elem.text());
+        if genre_name.is_empty() {
+            continue;
+        }
+
+        let mut animes = Vec::new();
+        let mut seen = HashSet::new();
+
+        for a in block.select(&SEL_GENRE_ANIME_LINKS) {
+            let Some(href) = a.value().attr("href") else {
+                continue;
+            };
+            let Some(url) = resolved_url(base, href) else {
+                continue;
+            };
+            let Some(relative) = url.path().strip_prefix("/anime/stream/") else {
+                continue;
+            };
+            let Some(slug) = relative.split('/').next() else {
+                continue;
+            };
+            if slug.is_empty() || !seen.insert(slug.to_string()) {
+                continue;
+            }
+
+            let title = stream_clean_text(a.text());
+            let title = if title.is_empty() {
+                a.value()
+                    .attr("title")
+                    .map(|t| t.trim_end_matches(" Stream anschauen").trim().to_string())
+                    .unwrap_or_else(|| slug.to_string())
+            } else {
+                title
+            };
+
+            animes.push(Series {
+                title,
+                slug: slug.to_string(),
+                url: url.to_string(),
+            });
+        }
+
+        if !animes.is_empty() {
+            genres.push(Genre {
+                name: genre_name,
+                animes,
+            });
+        }
+    }
+
+    genres
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     fn base() -> Url {
         Url::parse("https://example.test").unwrap()
+    }
+
+    #[test]
+    fn parse_catalog_and_genres() {
+        let catalog_html = r#"<div class="seriesListContainer row">
+            <div><a href="/anime/stream/frieren" title="Frieren stream online"><h3>Frieren</h3><small>Fantasy</small></a></div>
+            <div><a href="/anime/stream/fate" title="Fate stream online"><h3>Fate</h3><small>Action</small></a></div>
+        </div>"#;
+        let animes = parse_catalog_page(catalog_html, &base());
+        assert_eq!(animes.len(), 2);
+        assert_eq!(animes[0].title, "Frieren");
+        assert_eq!(animes[1].slug, "fate");
+
+        let genres_html = r#"<div class="genre">
+            <div class="seriesGenreList"><h3>Fantasy</h3></div>
+            <ul>
+                <li><a href="/anime/stream/frieren">Frieren</a></li>
+                <li><a href="/anime/stream/re-zero">Re:Zero</a></li>
+            </ul>
+        </div>
+        <div class="genre">
+            <div class="seriesGenreList"><h3>Action</h3></div>
+            <ul>
+                <li><a href="/anime/stream/bleach">Bleach</a></li>
+            </ul>
+        </div>"#;
+        let genres = parse_genres(genres_html, &base());
+        assert_eq!(genres.len(), 2);
+        assert_eq!(genres[0].name, "Fantasy");
+        assert_eq!(genres[0].animes.len(), 2);
+        assert_eq!(genres[1].name, "Action");
+        assert_eq!(genres[1].animes[0].title, "Bleach");
     }
 
     #[test]

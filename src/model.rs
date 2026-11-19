@@ -48,3 +48,9 @@ pub struct Progress {
     pub label: String,
     pub updated: String,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Genre {
+    pub name: String,
+    pub animes: Vec<Series>,
+}

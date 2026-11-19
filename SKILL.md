@@ -16,13 +16,13 @@ The project is structured as a single high-performance binary crate (`aniworld`)
 | Module | File | Purpose & Responsibilities |
 |---|---|---|
 | **Entry & Dispatch** | `src/main.rs` | CLI entry point, 8-category interactive post-playback TUI (`console::Term`), paged scrolling episode selectors, auto-play loop, doctor command. |
-| **Catalog & Scraping** | `src/catalog.rs` | HTML scraping via `scraper`/`html5ever`. Parses series search, seasons, episodes, languages, and host buttons. |
+| **Catalog & Scraping** | `src/catalog.rs` | HTML scraping via `scraper`/`html5ever`. Parses series search, A-Z and popular catalog pages (`parse_catalog_page`), genres and genre listings (`parse_genres`), seasons, episodes, languages, and host buttons. |
 | **Stream Resolution** | `src/resolve.rs` | Extracts direct HLS `.m3u8` streams from providers (VOE, Vidmoly). Decodes redirects and obfuscated payloads. |
 | **Network & Validation** | `src/net.rs` | `reqwest` client wrapper with custom browser User-Agent headers; concurrent HLS media-segment verification. |
 | **Player Execution** | `src/player.rs` | Safe, shell-less invocation of `mpv` via `std::process::Command`. Resolves player binary across OS platforms. |
-| **CLI Options** | `src/options.rs` | `clap` v4 derive definitions, environment variable fallbacks (`ANIWORLD_*`), language and hoster priority parsing. |
+| **CLI Options** | `src/options.rs` | `clap` v4 derive definitions (`--catalog`, `--genre`), environment variable fallbacks (`ANIWORLD_*`), language and hoster priority parsing. |
 | **State & Watchlist** | `src/state.rs` | Schema-compatible `state.json` watch history & favorites persistence; handles platform-specific XDG / AppData config paths. |
-| **Data Models** | `src/model.rs` | Core domain structs: `Series`, `Episode`, `Host`, `Stream`, `Progress`. |
+| **Data Models** | `src/model.rs` | Core domain structs: `Series`, `Episode`, `Host`, `Stream`, `Progress`, `Genre`. |
 
 ---
 
