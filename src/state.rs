@@ -13,6 +13,8 @@ pub struct State {
     pub version: u32,
     #[serde(default)]
     pub series: BTreeMap<String, Progress>,
+    #[serde(default)]
+    pub favorites: Vec<String>,
 }
 
 const fn state_version() -> u32 {
@@ -24,6 +26,7 @@ impl Default for State {
         Self {
             version: 1,
             series: BTreeMap::new(),
+            favorites: Vec::new(),
         }
     }
 }
@@ -81,6 +84,20 @@ impl State {
                 updated: Local::now().format("%Y-%m-%dT%H:%M:%S").to_string(),
             },
         );
+    }
+
+    pub fn is_favorite(&self, slug: &str) -> bool {
+        self.favorites.iter().any(|s| s == slug)
+    }
+
+    pub fn toggle_favorite(&mut self, slug: &str) -> bool {
+        if let Some(pos) = self.favorites.iter().position(|s| s == slug) {
+            self.favorites.remove(pos);
+            false
+        } else {
+            self.favorites.push(slug.to_string());
+            true
+        }
     }
 
     pub fn recent(&self) -> Vec<(String, Progress)> {

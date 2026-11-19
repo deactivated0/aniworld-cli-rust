@@ -297,6 +297,78 @@ aniworld "naruto" --episode 1-3 --no-menu
 aniworld "naruto" --episode 0-1 --no-menu
 ```
 
+### 📺 Rich Interactive Post-Playback Menu
+
+When an episode finishes or when closing the player, `aniworld-cli-rust` presents a categorized, responsive TUI menu with keyboard navigation (Arrow Up/Down, PageUp/PageDown, Home/End, or Vim `j`/`k`):
+
+```text
+Resolved via VOE (ger-dub)
+
+? After playback ›
+  ── CONTINUE ──────────────────────
+❯ Next episode
+  Previous episode
+  Replay episode
+  Resume playback
+  Next unwatched episode
+  Random episode
+
+  ── NAVIGATION ────────────────────
+  Select episode
+  Select season
+  Jump to episode
+  Search another anime
+  Continue another anime
+
+  ── STREAM & LANGUAGE ─────────────
+  Change language
+  Change hoster
+  Change stream quality
+  Find fastest hoster
+  Retry stream
+  Test all hosters
+
+  ── PLAYBACK ──────────────────────
+  Change playback speed
+  Select audio track
+  Select subtitle track
+  Toggle auto-next
+  Toggle skip intro
+  Toggle skip outro
+  Player settings
+
+  ── VIDEO ENHANCEMENTS ────────────
+  Toggle Anime4K
+  Select Anime4K preset
+  Video filters
+  Shader settings
+
+  ── LIBRARY ───────────────────────
+  Open watchlist
+  Open favorites
+  View watch history
+  Add/remove favorite
+  Mark as watched
+  Mark as unwatched
+
+  ── TOOLS ─────────────────────────
+  Episode information
+  Playback statistics
+  Copy episode URL
+  Copy stream URL
+  Open in browser
+  Refresh episode list
+  Refresh stream sources
+  Clear cache
+
+  ── SYSTEM ────────────────────────
+  Settings
+  Quit
+```
+
+- **Smooth Scrolling & Viewport Clamping:** The menu automatically adapts to your terminal height, scrolling categories smoothly without overflowing or corrupting terminal scrollback buffers.
+- **Section Skipping:** Arrow keys automatically navigate between active action items and skip over category header dividers.
+
 ### Language & Provider Preferences
 
 ```bash

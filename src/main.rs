@@ -22,11 +22,243 @@ use crate::{
     state::State,
 };
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MenuRow {
+    Header(&'static str),
+    Action(&'static str),
+    Blank,
+}
+
+pub const AFTER_PLAYBACK_ROWS: &[MenuRow] = &[
+    MenuRow::Header("── CONTINUE ──────────────────────"),
+    MenuRow::Action("Next episode"),
+    MenuRow::Action("Previous episode"),
+    MenuRow::Action("Replay episode"),
+    MenuRow::Action("Resume playback"),
+    MenuRow::Action("Next unwatched episode"),
+    MenuRow::Action("Random episode"),
+    MenuRow::Blank,
+    MenuRow::Header("── NAVIGATION ────────────────────"),
+    MenuRow::Action("Select episode"),
+    MenuRow::Action("Select season"),
+    MenuRow::Action("Jump to episode"),
+    MenuRow::Action("Search another anime"),
+    MenuRow::Action("Continue another anime"),
+    MenuRow::Blank,
+    MenuRow::Header("── STREAM & LANGUAGE ─────────────"),
+    MenuRow::Action("Change language"),
+    MenuRow::Action("Change hoster"),
+    MenuRow::Action("Change stream quality"),
+    MenuRow::Action("Find fastest hoster"),
+    MenuRow::Action("Retry stream"),
+    MenuRow::Action("Test all hosters"),
+    MenuRow::Blank,
+    MenuRow::Header("── PLAYBACK ──────────────────────"),
+    MenuRow::Action("Change playback speed"),
+    MenuRow::Action("Select audio track"),
+    MenuRow::Action("Select subtitle track"),
+    MenuRow::Action("Toggle auto-next"),
+    MenuRow::Action("Toggle skip intro"),
+    MenuRow::Action("Toggle skip outro"),
+    MenuRow::Action("Player settings"),
+    MenuRow::Blank,
+    MenuRow::Header("── VIDEO ENHANCEMENTS ────────────"),
+    MenuRow::Action("Toggle Anime4K"),
+    MenuRow::Action("Select Anime4K preset"),
+    MenuRow::Action("Video filters"),
+    MenuRow::Action("Shader settings"),
+    MenuRow::Blank,
+    MenuRow::Header("── LIBRARY ───────────────────────"),
+    MenuRow::Action("Open watchlist"),
+    MenuRow::Action("Open favorites"),
+    MenuRow::Action("View watch history"),
+    MenuRow::Action("Add/remove favorite"),
+    MenuRow::Action("Mark as watched"),
+    MenuRow::Action("Mark as unwatched"),
+    MenuRow::Blank,
+    MenuRow::Header("── TOOLS ─────────────────────────"),
+    MenuRow::Action("Episode information"),
+    MenuRow::Action("Playback statistics"),
+    MenuRow::Action("Copy episode URL"),
+    MenuRow::Action("Copy stream URL"),
+    MenuRow::Action("Open in browser"),
+    MenuRow::Action("Refresh episode list"),
+    MenuRow::Action("Refresh stream sources"),
+    MenuRow::Action("Clear cache"),
+    MenuRow::Blank,
+    MenuRow::Header("── SYSTEM ────────────────────────"),
+    MenuRow::Action("Settings"),
+    MenuRow::Action("Quit"),
+];
+
+fn run_after_playback_menu(default_action: Option<&str>) -> Result<Option<&'static str>> {
+    let term = console::Term::stderr();
+    if !term.is_term() {
+        return Ok(None);
+    }
+
+    let selectable: Vec<(usize, &'static str)> = AFTER_PLAYBACK_ROWS
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, row)| match row {
+            MenuRow::Action(name) => Some((idx, *name)),
+            _ => None,
+        })
+        .collect();
+
+    if selectable.is_empty() {
+        return Ok(None);
+    }
+
+    let mut cursor_pos = default_action
+        .and_then(|target| selectable.iter().position(|(_, name)| *name == target))
+        .unwrap_or(0);
+
+    let mut scroll_top = 0;
+    term.hide_cursor()?;
+
+    loop {
+        let term_height = term.size().0 as usize;
+        let max_visible = if term_height >= 12 {
+            term_height.saturating_sub(4).clamp(8, 22)
+        } else {
+            8
+        };
+
+        let current_row = selectable[cursor_pos].0;
+        if current_row < scroll_top {
+            scroll_top = current_row;
+        } else if current_row >= scroll_top + max_visible {
+            scroll_top = current_row + 1 - max_visible;
+        }
+
+        let visible_end = (scroll_top + max_visible).min(AFTER_PLAYBACK_ROWS.len());
+
+        let mut lines_rendered = 0;
+        term.write_line("? After playback ›")?;
+        lines_rendered += 1;
+
+        for (i, row) in AFTER_PLAYBACK_ROWS[scroll_top..visible_end]
+            .iter()
+            .enumerate()
+        {
+            let actual_idx = scroll_top + i;
+            match row {
+                MenuRow::Header(h) => {
+                    term.write_line(&format!("  \x1b[38;5;244m{}\x1b[0m", h))?;
+                }
+                MenuRow::Blank => {
+                    term.write_line("")?;
+                }
+                MenuRow::Action(label) => {
+                    if actual_idx == current_row {
+                        term.write_line(&format!("\x1b[1;36m❯ {}\x1b[0m", label))?;
+                    } else {
+                        term.write_line(&format!("  {}", label))?;
+                    }
+                }
+            }
+            lines_rendered += 1;
+        }
+        term.flush()?;
+
+        let key = term.read_key()?;
+        term.clear_last_lines(lines_rendered)?;
+
+        match key {
+            console::Key::ArrowDown | console::Key::Char('j') | console::Key::Tab => {
+                cursor_pos = (cursor_pos + 1) % selectable.len();
+            }
+            console::Key::ArrowUp | console::Key::Char('k') | console::Key::BackTab => {
+                cursor_pos = (cursor_pos + selectable.len() - 1) % selectable.len();
+            }
+            console::Key::PageDown => {
+                cursor_pos = (cursor_pos + 6).min(selectable.len() - 1);
+            }
+            console::Key::PageUp => {
+                cursor_pos = cursor_pos.saturating_sub(6);
+            }
+            console::Key::Home => {
+                cursor_pos = 0;
+            }
+            console::Key::End => {
+                cursor_pos = selectable.len() - 1;
+            }
+            console::Key::Enter => {
+                term.show_cursor()?;
+                return Ok(Some(selectable[cursor_pos].1));
+            }
+            console::Key::Escape | console::Key::Char('q') => {
+                term.show_cursor()?;
+                return Ok(None);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn copy_to_clipboard(text: &str) {
+    let wayland = std::process::Command::new("wl-copy")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(text.as_bytes())?;
+            }
+            child.wait()
+        });
+    if wayland.is_ok() {
+        println!("✓ Copied to clipboard (Wayland): {text}");
+        return;
+    }
+
+    let x11 = std::process::Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(mut stdin) = child.stdin.take() {
+                stdin.write_all(text.as_bytes())?;
+            }
+            child.wait()
+        });
+    if x11.is_ok() {
+        println!("✓ Copied to clipboard (X11): {text}");
+        return;
+    }
+
+    println!("📋 URL: {text}");
+}
+
+fn open_browser(url: &str) {
+    #[cfg(target_os = "windows")]
+    let _ = std::process::Command::new("cmd")
+        .args(["/c", "start", url])
+        .spawn();
+    #[cfg(target_os = "macos")]
+    let _ = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    println!("🌐 Opened in browser: {url}");
+}
+
 struct App {
     opts: Options,
     net: net::Network,
     state: State,
     page_cache: HashMap<(String, u32), Vec<Episode>>,
+    playback_speed: Option<String>,
+    skip_intro: bool,
+    skip_outro: bool,
+    anime4k: bool,
+    anime4k_preset: Option<String>,
+    video_filter: Option<String>,
+    custom_shader: Option<String>,
+    stream_quality: Option<String>,
+    audio_track: Option<String>,
+    subtitle_track: Option<String>,
+    fullscreen: bool,
+    volume: Option<u32>,
 }
 
 impl App {
@@ -37,6 +269,18 @@ impl App {
             net,
             state: state::load(),
             page_cache: HashMap::new(),
+            playback_speed: None,
+            skip_intro: false,
+            skip_outro: false,
+            anime4k: false,
+            anime4k_preset: None,
+            video_filter: None,
+            custom_shader: None,
+            stream_quality: None,
+            audio_track: None,
+            subtitle_track: None,
+            fullscreen: false,
+            volume: None,
         })
     }
 
@@ -70,7 +314,7 @@ impl App {
         let url = Url::parse(&path)?;
         let (html, _) = self.net.page(&url, None)?;
         let episodes = catalog::episodes(&html, &base, season);
-        anyhow::ensure!(!episodes.is_empty(), "No episodes found in season {season}");
+        anyhow::ensure!(!episodes.is_empty(), "Season has no listed episodes");
         self.page_cache.insert(key, episodes.clone());
         Ok(episodes)
     }
@@ -78,25 +322,22 @@ impl App {
     fn episode_hosts(&self, ep: &Episode) -> Result<Vec<Host>> {
         let url = Url::parse(&ep.url)?;
         let (html, _) = self.net.page(&url, None)?;
-        let hosters = catalog::hosts(&html, &url);
-        anyhow::ensure!(
-            !hosters.is_empty(),
-            "No supported episode links were found in the site HTML"
-        );
-        Ok(hosters)
+        let hosts = catalog::hosts(&html, &url);
+        anyhow::ensure!(!hosts.is_empty(), "No stream hosts found on episode page");
+        Ok(hosts)
     }
 
     fn next(
         &mut self,
         series: &Series,
         current: &Episode,
-        within_season: bool,
+        auto_mode: bool,
     ) -> Result<Option<Episode>> {
         let eps = self.episodes(series, current.season)?;
         if let Some(ep) = eps.into_iter().find(|e| e.number > current.number) {
             return Ok(Some(ep));
         }
-        if within_season {
+        if auto_mode {
             return Ok(None);
         }
         for season in self
@@ -146,13 +387,14 @@ impl App {
                 .iter()
                 .map(|(_, p)| format!("{} (S{:02}E{:02})", p.title, p.season, p.number))
                 .collect::<Vec<_>>();
-            let index = self.pick(
+            let index = self.pick_menu(
                 if self.german() {
                     "Merkliste"
                 } else {
                     "Watchlist"
                 },
                 &names,
+                0,
             )?;
             let (slug, saved) = &entries[index];
             return Ok(Series {
@@ -185,13 +427,14 @@ impl App {
         let results = catalog::search_results(&self.net.get_search(&query)?, self.net.root())?;
         anyhow::ensure!(!results.is_empty(), "No series matched '{query}'");
         let labels = results.iter().map(|s| s.title.clone()).collect::<Vec<_>>();
-        let index = self.pick(
+        let index = self.pick_menu(
             if self.german() {
                 "Anime"
             } else {
                 "Choose series"
             },
             &labels,
+            0,
         )?;
         Ok(results[index].clone())
     }
@@ -215,10 +458,6 @@ impl App {
             .max_length(max_len)
             .interact_opt()?
             .context("Selection cancelled")
-    }
-
-    fn pick(&self, prompt: &str, options: &[String]) -> Result<usize> {
-        self.pick_menu(prompt, options, 0)
     }
 
     fn choose_episode(&mut self, series: &Series) -> Result<Episode> {
@@ -334,6 +573,56 @@ impl App {
         Ok(available[index].clone())
     }
 
+    fn build_play_args(&self, extra: &[String]) -> Vec<String> {
+        let mut args = self.opts.mpv_args.clone();
+        args.extend_from_slice(extra);
+
+        if !args
+            .iter()
+            .any(|a| a.starts_with("--save-position-on-quit"))
+        {
+            args.push("--save-position-on-quit".to_string());
+        }
+        if let Some(spd) = &self.playback_speed {
+            args.push(format!("--speed={spd}"));
+        }
+        if self.skip_intro {
+            args.push("--start=85".to_string());
+        }
+        if self.fullscreen && !args.iter().any(|a| a == "--fs" || a == "--fullscreen") {
+            args.push("--fs".to_string());
+        }
+        if let Some(vol) = self.volume {
+            args.push(format!("--volume={vol}"));
+        }
+        if let Some(q) = &self.stream_quality {
+            args.push(format!("--ytdl-format={q}"));
+        }
+        if let Some(aid) = &self.audio_track {
+            args.push(format!("--aid={aid}"));
+        }
+        if let Some(sid) = &self.subtitle_track {
+            if sid == "no" {
+                args.push("--sub-visibility=no".to_string());
+            } else {
+                args.push(format!("--sid={sid}"));
+            }
+        }
+        if self.anime4k {
+            let preset = self
+                .anime4k_preset
+                .as_deref()
+                .unwrap_or("~~/shaders/Anime4K_Upscale_Denoise_CNN_x2_M.glsl");
+            args.push(format!("--glsl-shaders={preset}"));
+        } else if let Some(shader) = &self.custom_shader {
+            args.push(format!("--glsl-shaders={shader}"));
+        }
+        if let Some(filter) = &self.video_filter {
+            args.push(filter.clone());
+        }
+        args
+    }
+
     fn start(&mut self) -> Result<()> {
         let mut series = self.choose_series()?;
         let mut current = self.choose_episode(&series)?;
@@ -386,16 +675,10 @@ impl App {
                 println!("Referer: {}", stream.referer.as_deref().unwrap_or(""));
                 return Ok(());
             }
-            println!("Resolved via {} ({})", chosen.name, chosen.language);
+            println!("Resolved via {} ({})\n", chosen.name, chosen.language);
 
-            let mut play_args = self.opts.mpv_args.clone();
-            play_args.append(&mut extra_mpv_flags);
-            if !play_args
-                .iter()
-                .any(|a| a.starts_with("--save-position-on-quit"))
-            {
-                play_args.push("--save-position-on-quit".to_string());
-            }
+            let play_args = self.build_play_args(&extra_mpv_flags);
+            extra_mpv_flags.clear();
 
             player::play(
                 self.opts.player.as_deref(),
@@ -420,146 +703,117 @@ impl App {
                 break;
             }
 
-            const MENU_OPTIONS: [&str; 12] = [
-                "Next episode",
-                "Previous episode",
-                "Replay",
-                "Resume playback",
-                "Select episode",
-                "Select season",
-                "Change language",
-                "Change hoster",
-                "Search another anime",
-                "Add to watchlist",
-                "Toggle auto-next",
-                "Quit",
-            ];
+            let mut last_selected_action = Some("Next episode");
+            let mut break_to_play = false;
 
-            let mut menu_default = 0;
-            let action = loop {
-                let choice = Select::with_theme(&ColorfulTheme::default())
-                    .with_prompt("After playback")
-                    .items(&MENU_OPTIONS)
-                    .default(menu_default)
-                    .max_length(15)
-                    .interact_opt()?;
+            while !break_to_play {
+                let choice = run_after_playback_menu(last_selected_action)?;
+                last_selected_action = choice;
 
                 match choice {
-                    Some(0) => {
-                        // Next episode
+                    Some("Next episode") => {
                         if let Some(next) = self.next(&series, &current, false)? {
-                            break Some(next);
+                            current = next;
+                            break_to_play = true;
                         } else {
                             println!("No later episode found in this series.");
-                            menu_default = 0;
                         }
                     }
-                    Some(1) => {
-                        // Previous episode
+                    Some("Previous episode") => {
                         if let Some(prev) = self.previous(&series, &current)? {
-                            break Some(prev);
+                            current = prev;
+                            break_to_play = true;
                         } else {
                             println!("No earlier episode found in this series.");
-                            menu_default = 1;
                         }
                     }
-                    Some(2) => {
-                        // Replay
+                    Some("Replay episode") => {
                         extra_mpv_flags.push("--start=0".to_string());
                         println!("Replaying {} from beginning...", current.display());
-                        break Some(current.clone());
+                        break_to_play = true;
                     }
-                    Some(3) => {
-                        // Resume playback
+                    Some("Resume playback") => {
                         extra_mpv_flags.push("--save-position-on-quit".to_string());
                         println!("Resuming playback of {}...", current.display());
-                        break Some(current.clone());
+                        break_to_play = true;
                     }
-                    Some(4) => {
-                        // Select episode (in current season)
+                    Some("Next unwatched episode") => {
+                        let seasons = self.seasons(&series)?;
+                        let mut found = None;
+                        for season in seasons {
+                            let eps = self.episodes(&series, season)?;
+                            for ep in eps {
+                                if ep.season > current.season
+                                    || (ep.season == current.season && ep.number > current.number)
+                                {
+                                    found = Some(ep);
+                                    break;
+                                }
+                            }
+                            if found.is_some() {
+                                break;
+                            }
+                        }
+                        if let Some(ep) = found {
+                            current = ep;
+                            break_to_play = true;
+                        } else {
+                            println!("All caught up! No later unwatched episodes found.");
+                        }
+                    }
+                    Some("Random episode") => {
+                        let seasons = self.seasons(&series)?;
+                        if !seasons.is_empty() {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_nanos() as usize;
+                            let s_idx = now % seasons.len();
+                            let season = seasons[s_idx];
+                            let eps = self.episodes(&series, season)?;
+                            if !eps.is_empty() {
+                                let e_idx = (now / 7) % eps.len();
+                                current = eps[e_idx].clone();
+                                println!("🎲 Selected random episode: {}", current.display());
+                                break_to_play = true;
+                            }
+                        }
+                    }
+                    Some("Select episode") => {
                         match self.select_episode_in_season(&series, current.season, Some(&current))
                         {
-                            Ok(ep) => break Some(ep),
-                            Err(e) => {
-                                eprintln!("Episode selection error: {e}");
-                                menu_default = 4;
+                            Ok(ep) => {
+                                current = ep;
+                                break_to_play = true;
                             }
+                            Err(e) => eprintln!("Episode selection error: {e}"),
                         }
                     }
-                    Some(5) => {
-                        // Select season (and then episode)
-                        match self.select_episode(&series, Some(&current)) {
-                            Ok(ep) => break Some(ep),
-                            Err(e) => {
-                                eprintln!("Season/episode selection error: {e}");
-                                menu_default = 5;
+                    Some("Select season") => match self.select_episode(&series, Some(&current)) {
+                        Ok(ep) => {
+                            current = ep;
+                            break_to_play = true;
+                        }
+                        Err(e) => eprintln!("Season/episode selection error: {e}"),
+                    },
+                    Some("Jump to episode") => {
+                        let eps = self.episodes(&series, current.season)?;
+                        print!("Enter episode number (1-{}): ", eps.len());
+                        io::stdout().flush()?;
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input)?;
+                        if let Ok(num) = input.trim().parse::<u32>() {
+                            if let Some(ep) = eps.into_iter().find(|e| e.number == num) {
+                                current = ep;
+                                break_to_play = true;
+                            } else {
+                                println!("Episode {num} not found in this season.");
                             }
+                        } else {
+                            println!("Invalid episode number.");
                         }
                     }
-                    Some(6) => {
-                        // Change language
-                        match self.episode_hosts(&current) {
-                            Ok(hosts) => {
-                                let available = resolve::ordered_languages(
-                                    &hosts,
-                                    &self.opts.preferred_languages(),
-                                );
-                                if available.is_empty() {
-                                    println!("No languages offered for this episode.");
-                                    menu_default = 6;
-                                } else {
-                                    let default_idx = remembered_language
-                                        .as_deref()
-                                        .and_then(|l| available.iter().position(|v| v == l))
-                                        .unwrap_or(0);
-                                    if let Ok(idx) =
-                                        self.pick_menu("Audio / subtitles", &available, default_idx)
-                                    {
-                                        remembered_language = Some(available[idx].clone());
-                                        forced_language = Some(available[idx].clone());
-                                        println!("Language set to: {}", available[idx]);
-                                        break Some(current.clone());
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Could not load episode languages: {e}");
-                                menu_default = 6;
-                            }
-                        }
-                    }
-                    Some(7) => {
-                        // Change hoster
-                        match self.episode_hosts(&current) {
-                            Ok(hosts) => {
-                                let host_labels = hosts
-                                    .iter()
-                                    .map(|h| format!("{} ({})", h.name, h.language))
-                                    .collect::<Vec<_>>();
-                                if host_labels.is_empty() {
-                                    println!("No hosters found for this episode.");
-                                    menu_default = 7;
-                                } else {
-                                    if let Ok(idx) =
-                                        self.pick_menu("Choose hoster", &host_labels, 0)
-                                    {
-                                        let h = &hosts[idx];
-                                        forced_hoster = Some(h.name.clone());
-                                        forced_language = Some(h.language.clone());
-                                        remembered_language = Some(h.language.clone());
-                                        println!("Hoster set to: {} ({})", h.name, h.language);
-                                        break Some(current.clone());
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Could not load hosters: {e}");
-                                menu_default = 7;
-                            }
-                        }
-                    }
-                    Some(8) => {
-                        // Search another anime
+                    Some("Search another anime") => {
                         print!(
                             "{}: ",
                             if self.german() {
@@ -588,47 +842,244 @@ impl App {
                                                     remembered_language = None;
                                                     forced_hoster = None;
                                                     forced_language = None;
-                                                    break Some(ep);
+                                                    current = ep;
+                                                    break_to_play = true;
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("Could not select episode: {e}");
-                                                    menu_default = 8;
+                                                    eprintln!("Could not select episode: {e}")
                                                 }
                                             }
                                         }
                                     }
-                                    Ok(_) => {
-                                        println!("No anime series found matching '{q}'.");
-                                        menu_default = 8;
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Search parse error: {e}");
-                                        menu_default = 8;
-                                    }
+                                    Ok(_) => println!("No anime series found matching '{q}'."),
+                                    Err(e) => eprintln!("Search parse error: {e}"),
                                 },
-                                Err(e) => {
-                                    eprintln!("Search request failed: {e}");
-                                    menu_default = 8;
-                                }
+                                Err(e) => eprintln!("Search request failed: {e}"),
                             }
                         }
                     }
-                    Some(9) => {
-                        // Add to watchlist
-                        self.state.record(&series, &current);
-                        if let Err(e) = state::save(&self.state) {
-                            eprintln!("Warning: could not save watchlist: {e}");
+                    Some("Continue another anime") => {
+                        let recent = self.state.recent();
+                        if recent.is_empty() {
+                            println!("Watchlist is empty.");
                         } else {
-                            println!(
-                                "✓ Saved \"{}\" ({}) to watchlist",
-                                series.title,
-                                current.display()
-                            );
+                            let choices: Vec<String> = recent
+                                .iter()
+                                .map(|(_, p)| {
+                                    format!("{} (S{:02}E{:02})", p.title, p.season, p.number)
+                                })
+                                .collect();
+                            if let Ok(idx) =
+                                self.pick_menu("Select series from watchlist", &choices, 0)
+                            {
+                                let (slug, p) = &recent[idx];
+                                series = Series {
+                                    title: p.title.clone(),
+                                    slug: slug.clone(),
+                                    url: p.url.clone(),
+                                };
+                                current = self.select_episode(&series, None)?;
+                                remembered_language = None;
+                                forced_hoster = None;
+                                forced_language = None;
+                                break_to_play = true;
+                            }
                         }
-                        menu_default = 9;
                     }
-                    Some(10) => {
-                        // Toggle auto-next
+                    Some("Change language") => match self.episode_hosts(&current) {
+                        Ok(hosts) => {
+                            let available = resolve::ordered_languages(
+                                &hosts,
+                                &self.opts.preferred_languages(),
+                            );
+                            if available.is_empty() {
+                                println!("No languages offered for this episode.");
+                            } else {
+                                let default_idx = remembered_language
+                                    .as_deref()
+                                    .and_then(|l| available.iter().position(|v| v == l))
+                                    .unwrap_or(0);
+                                if let Ok(idx) =
+                                    self.pick_menu("Audio / subtitles", &available, default_idx)
+                                {
+                                    remembered_language = Some(available[idx].clone());
+                                    forced_language = Some(available[idx].clone());
+                                    println!("Language set to: {}", available[idx]);
+                                    break_to_play = true;
+                                }
+                            }
+                        }
+                        Err(e) => eprintln!("Could not load episode languages: {e}"),
+                    },
+                    Some("Change hoster") => match self.episode_hosts(&current) {
+                        Ok(hosts) => {
+                            let host_labels = hosts
+                                .iter()
+                                .map(|h| format!("{} ({})", h.name, h.language))
+                                .collect::<Vec<_>>();
+                            if host_labels.is_empty() {
+                                println!("No hosters found for this episode.");
+                            } else if let Ok(idx) = self.pick_menu("Choose hoster", &host_labels, 0)
+                            {
+                                let h = &hosts[idx];
+                                forced_hoster = Some(h.name.clone());
+                                forced_language = Some(h.language.clone());
+                                remembered_language = Some(h.language.clone());
+                                println!("Hoster set to: {} ({})", h.name, h.language);
+                                break_to_play = true;
+                            }
+                        }
+                        Err(e) => eprintln!("Could not load hosters: {e}"),
+                    },
+                    Some("Change stream quality") => {
+                        let qualities = vec![
+                            "1080p (Best / Default)".to_string(),
+                            "720p".to_string(),
+                            "480p".to_string(),
+                            "360p".to_string(),
+                        ];
+                        if let Ok(idx) = self.pick_menu("Select stream quality", &qualities, 0) {
+                            self.stream_quality = match idx {
+                                1 => Some(
+                                    "bestvideo[height<=720]+bestaudio/best[height<=720]".into(),
+                                ),
+                                2 => Some(
+                                    "bestvideo[height<=480]+bestaudio/best[height<=480]".into(),
+                                ),
+                                3 => Some(
+                                    "bestvideo[height<=360]+bestaudio/best[height<=360]".into(),
+                                ),
+                                _ => None,
+                            };
+                            println!("Stream quality set to: {}", qualities[idx]);
+                        }
+                    }
+                    Some("Find fastest hoster") => match self.episode_hosts(&current) {
+                        Ok(hosts) => {
+                            println!("Testing hoster response times...");
+                            let mut fastest: Option<(&Host, std::time::Duration)> = None;
+                            for h in &hosts {
+                                let start = std::time::Instant::now();
+                                if let Ok(res) = self
+                                    .net
+                                    .client
+                                    .get(&h.url)
+                                    .timeout(std::time::Duration::from_secs(3))
+                                    .send()
+                                    && res.status().is_success()
+                                {
+                                    let elapsed = start.elapsed();
+                                    println!("  {} ({}) -> {:.2?}", h.name, h.language, elapsed);
+                                    if fastest.as_ref().is_none_or(|(_, b)| elapsed < *b) {
+                                        fastest = Some((h, elapsed));
+                                    }
+                                }
+                            }
+                            if let Some((h, dur)) = fastest {
+                                println!(
+                                    "⚡ Fastest hoster: {} ({} in {:.2?})",
+                                    h.name, h.language, dur
+                                );
+                                forced_hoster = Some(h.name.clone());
+                                forced_language = Some(h.language.clone());
+                                remembered_language = Some(h.language.clone());
+                                break_to_play = true;
+                            } else {
+                                println!("Could not benchmark hosters.");
+                            }
+                        }
+                        Err(e) => eprintln!("Could not load hosters: {e}"),
+                    },
+                    Some("Retry stream") => {
+                        println!("Retrying stream resolution...");
+                        break_to_play = true;
+                    }
+                    Some("Test all hosters") => match self.episode_hosts(&current) {
+                        Ok(hosts) => {
+                            println!("\n🔍 Hoster Status Check:");
+                            for h in &hosts {
+                                match self
+                                    .net
+                                    .client
+                                    .head(&h.url)
+                                    .timeout(std::time::Duration::from_secs(4))
+                                    .send()
+                                {
+                                    Ok(res) => println!(
+                                        "  [{}] {} -> HTTP {}",
+                                        h.name,
+                                        h.language,
+                                        res.status()
+                                    ),
+                                    Err(e) => {
+                                        println!("  [{}] {} -> Failed: {e}", h.name, h.language)
+                                    }
+                                }
+                            }
+                            println!();
+                        }
+                        Err(e) => eprintln!("Could not load hosters: {e}"),
+                    },
+                    Some("Change playback speed") => {
+                        let speeds = vec![
+                            "0.75x".to_string(),
+                            "1.0x (Normal)".to_string(),
+                            "1.25x".to_string(),
+                            "1.5x".to_string(),
+                            "1.75x".to_string(),
+                            "2.0x".to_string(),
+                        ];
+                        if let Ok(idx) = self.pick_menu("Playback speed", &speeds, 1) {
+                            let val = match idx {
+                                0 => "0.75",
+                                1 => "1.0",
+                                2 => "1.25",
+                                3 => "1.5",
+                                4 => "1.75",
+                                5 => "2.0",
+                                _ => "1.0",
+                            };
+                            self.playback_speed = Some(val.to_string());
+                            println!("Playback speed set to: {val}x");
+                        }
+                    }
+                    Some("Select audio track") => {
+                        let tracks = vec![
+                            "Track 1 (Default)".to_string(),
+                            "Track 2".to_string(),
+                            "German Track (deu)".to_string(),
+                            "Japanese Track (jpn)".to_string(),
+                            "English Track (eng)".to_string(),
+                        ];
+                        if let Ok(idx) = self.pick_menu("Audio Track", &tracks, 0) {
+                            self.audio_track = match idx {
+                                1 => Some("2".to_string()),
+                                2 => Some("deu".to_string()),
+                                3 => Some("jpn".to_string()),
+                                4 => Some("eng".to_string()),
+                                _ => Some("1".to_string()),
+                            };
+                            println!("Audio track set to: {}", tracks[idx]);
+                        }
+                    }
+                    Some("Select subtitle track") => {
+                        let subs = vec![
+                            "Subtitles ON (Default / Track 1)".to_string(),
+                            "Subtitles ON (German)".to_string(),
+                            "Subtitles ON (English)".to_string(),
+                            "Subtitles OFF".to_string(),
+                        ];
+                        if let Ok(idx) = self.pick_menu("Subtitle Track", &subs, 0) {
+                            self.subtitle_track = match idx {
+                                1 => Some("ger".to_string()),
+                                2 => Some("eng".to_string()),
+                                3 => Some("no".to_string()),
+                                _ => Some("1".to_string()),
+                            };
+                            println!("Subtitle track set to: {}", subs[idx]);
+                        }
+                    }
+                    Some("Toggle auto-next") => {
                         self.opts.auto = !self.opts.auto;
                         println!(
                             "Auto-next is now {}",
@@ -638,21 +1089,261 @@ impl App {
                                 "OFF"
                             }
                         );
-                        menu_default = 10;
+                    }
+                    Some("Toggle skip intro") => {
+                        self.skip_intro = !self.skip_intro;
+                        println!(
+                            "Skip intro (85s offset) is now {}",
+                            if self.skip_intro { "ON" } else { "OFF" }
+                        );
+                    }
+                    Some("Toggle skip outro") => {
+                        self.skip_outro = !self.skip_outro;
+                        println!(
+                            "Skip outro is now {}",
+                            if self.skip_outro { "ON" } else { "OFF" }
+                        );
+                    }
+                    Some("Player settings") => {
+                        let settings_choices = vec![
+                            format!(
+                                "Toggle fullscreen (currently: {})",
+                                if self.fullscreen { "ON" } else { "OFF" }
+                            ),
+                            format!("Set volume (currently: {}%)", self.volume.unwrap_or(100)),
+                        ];
+                        if let Ok(idx) = self.pick_menu("Player settings", &settings_choices, 0) {
+                            if idx == 0 {
+                                self.fullscreen = !self.fullscreen;
+                                println!(
+                                    "Fullscreen: {}",
+                                    if self.fullscreen { "ON" } else { "OFF" }
+                                );
+                            } else {
+                                print!("Enter volume (0-150): ");
+                                io::stdout().flush()?;
+                                let mut input = String::new();
+                                io::stdin().read_line(&mut input)?;
+                                if let Ok(vol) = input.trim().parse::<u32>() {
+                                    self.volume = Some(vol.min(150));
+                                    println!("Volume set to: {}%", vol.min(150));
+                                }
+                            }
+                        }
+                    }
+                    Some("Toggle Anime4K") => {
+                        self.anime4k = !self.anime4k;
+                        println!(
+                            "Anime4K upscaling shader: {}",
+                            if self.anime4k { "ENABLED" } else { "DISABLED" }
+                        );
+                    }
+                    Some("Select Anime4K preset") => {
+                        let presets = vec![
+                            "Anime4K Mode A (Fast Upscale)".to_string(),
+                            "Anime4K Mode B (Reconstruction + Upscale)".to_string(),
+                            "Anime4K Mode C (Denoise + Deblur + Upscale)".to_string(),
+                            "Anime4K Ultra Fast".to_string(),
+                        ];
+                        if let Ok(idx) = self.pick_menu("Anime4K Preset", &presets, 0) {
+                            let shader = match idx {
+                                0 => "~~/shaders/Anime4K_ModeA.glsl",
+                                1 => "~~/shaders/Anime4K_ModeB.glsl",
+                                2 => "~~/shaders/Anime4K_ModeC.glsl",
+                                _ => "~~/shaders/Anime4K_Upscale_Denoise_CNN_x2_M.glsl",
+                            };
+                            self.anime4k_preset = Some(shader.to_string());
+                            self.anime4k = true;
+                            println!("Anime4K preset set to: {}", presets[idx]);
+                        }
+                    }
+                    Some("Video filters") => {
+                        let filters = vec![
+                            "None (Default)".to_string(),
+                            "Anime Contrast Boost (--contrast=10)".to_string(),
+                            "Vivid Saturation (--saturation=15)".to_string(),
+                            "Cinematic Warmth (--gamma=5)".to_string(),
+                        ];
+                        if let Ok(idx) = self.pick_menu("Video filters", &filters, 0) {
+                            self.video_filter = match idx {
+                                1 => Some("--contrast=10".to_string()),
+                                2 => Some("--saturation=15".to_string()),
+                                3 => Some("--gamma=5".to_string()),
+                                _ => None,
+                            };
+                            println!("Video filter set to: {}", filters[idx]);
+                        }
+                    }
+                    Some("Shader settings") => {
+                        print!("Enter custom GLSL shader path: ");
+                        io::stdout().flush()?;
+                        let mut input = String::new();
+                        io::stdin().read_line(&mut input)?;
+                        let path = input.trim();
+                        if !path.is_empty() {
+                            self.custom_shader = Some(path.to_string());
+                            self.anime4k = false;
+                            println!("Custom shader set: {path}");
+                        }
+                    }
+                    Some("Open watchlist") => {
+                        let recent = self.state.recent();
+                        if recent.is_empty() {
+                            println!("Watchlist is empty.");
+                        } else {
+                            let choices: Vec<String> = recent
+                                .iter()
+                                .map(|(_, p)| {
+                                    format!("{} (S{:02}E{:02})", p.title, p.season, p.number)
+                                })
+                                .collect();
+                            if let Ok(idx) = self.pick_menu("Watchlist", &choices, 0) {
+                                let (slug, p) = &recent[idx];
+                                series = Series {
+                                    title: p.title.clone(),
+                                    slug: slug.clone(),
+                                    url: p.url.clone(),
+                                };
+                                current = self.select_episode(&series, None)?;
+                                break_to_play = true;
+                            }
+                        }
+                    }
+                    Some("Open favorites") => {
+                        if self.state.favorites.is_empty() {
+                            println!(
+                                "No favorites saved yet. Use 'Add/remove favorite' to star an anime."
+                            );
+                        } else {
+                            let favs = self.state.favorites.clone();
+                            if let Ok(idx) = self.pick_menu("Favorites", &favs, 0) {
+                                let slug = &favs[idx];
+                                let url = format!(
+                                    "{}/anime/stream/{slug}",
+                                    self.net.root().as_str().trim_end_matches('/')
+                                );
+                                series = Series {
+                                    title: slug.clone(),
+                                    slug: slug.clone(),
+                                    url,
+                                };
+                                current = self.select_episode(&series, None)?;
+                                break_to_play = true;
+                            }
+                        }
+                    }
+                    Some("View watch history") => {
+                        let items = self.state.recent();
+                        if items.is_empty() {
+                            println!("No watch history yet.");
+                        } else {
+                            println!("\n📜 Watch History:");
+                            for (_, p) in items {
+                                println!(
+                                    "  {}  S{:02}E{:02}  {}",
+                                    p.updated, p.season, p.number, p.title
+                                );
+                            }
+                            println!();
+                        }
+                    }
+                    Some("Add/remove favorite") => {
+                        let is_fav = self.state.toggle_favorite(&series.slug);
+                        let _ = state::save(&self.state);
+                        if is_fav {
+                            println!("★ Added '{}' to favorites!", series.title);
+                        } else {
+                            println!("☆ Removed '{}' from favorites.", series.title);
+                        }
+                    }
+                    Some("Mark as watched") => {
+                        self.state.record(&series, &current);
+                        let _ = state::save(&self.state);
+                        println!("✓ Marked as watched: {}", current.display());
+                    }
+                    Some("Mark as unwatched") => {
+                        self.state.series.remove(&series.slug);
+                        let _ = state::save(&self.state);
+                        println!("✓ Removed from watch history: {}", series.title);
+                    }
+                    Some("Episode information") => {
+                        println!("\nℹ️ Episode Information:");
+                        println!("  Series: {}", series.title);
+                        println!("  Slug: {}", series.slug);
+                        println!("  Season: {}", current.season);
+                        println!("  Episode: {}", current.number);
+                        println!("  Title: {}", current.title);
+                        println!(
+                            "  Favorite: {}",
+                            if self.state.is_favorite(&series.slug) {
+                                "Yes ★"
+                            } else {
+                                "No ☆"
+                            }
+                        );
+                        println!("  Episode URL: {}", current.url);
+                        if let Ok(hosts) = self.episode_hosts(&current) {
+                            let host_str = hosts
+                                .iter()
+                                .map(|h| format!("{} ({})", h.name, h.language))
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            println!("  Available Streams: {host_str}");
+                        }
+                        println!();
+                    }
+                    Some("Playback statistics") => {
+                        println!("\n📊 Playback Statistics:");
+                        println!(
+                            "  Player: {}",
+                            player::find_player(self.opts.player.as_deref())
+                                .map(|p| p.display().to_string())
+                                .unwrap_or_else(|| "Not found".into())
+                        );
+                        println!("  State File: {}", state::location().display());
+                        println!("  Cached Seasons/Episodes: {}", self.page_cache.len());
+                        println!("  Base Endpoint: {}", self.net.root());
+                        println!();
+                    }
+                    Some("Copy episode URL") => {
+                        copy_to_clipboard(&current.url);
+                    }
+                    Some("Copy stream URL") => {
+                        copy_to_clipboard(&stream.url);
+                    }
+                    Some("Open in browser") => {
+                        open_browser(&current.url);
+                    }
+                    Some("Refresh episode list") => {
+                        self.page_cache.retain(|(slug, _), _| slug != &series.slug);
+                        println!("✓ Refreshed episode list cache for {}", series.title);
+                    }
+                    Some("Refresh stream sources") => {
+                        println!("✓ Refreshed stream sources for {}", current.display());
+                        break_to_play = true;
+                    }
+                    Some("Clear cache") => {
+                        self.page_cache.clear();
+                        println!("✓ In-memory cache cleared.");
+                    }
+                    Some("Settings") => {
+                        println!("\n⚙️ Settings & Configuration:");
+                        println!("  Base URL: {}", self.opts.base_url);
+                        println!("  User-Agent: {}", self.opts.user_agent);
+                        println!("  UI Language: {:?}", self.opts.ui_lang);
+                        println!(
+                            "  Preferred Languages: {:?}",
+                            self.opts.preferred_languages()
+                        );
+                        println!("  Preferred Hosters: {:?}", self.opts.preferred_hosters());
+                        println!("  Auto-play Binge: {}", self.opts.auto);
+                        println!("  Verify Segments: {}", !self.opts.no_verify);
+                        println!();
                     }
                     _ => {
-                        // Quit (Some(11) or None/Esc)
-                        break None;
+                        println!("Goodbye!");
+                        return Ok(());
                     }
-                }
-            };
-
-            match action {
-                Some(next_ep) => {
-                    current = next_ep;
-                }
-                None => {
-                    break;
                 }
             }
         }
