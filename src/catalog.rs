@@ -31,6 +31,42 @@ static SEL_HOSTS_ITEMS: LazyLock<Selector> = LazyLock::new(|| {
 static SEL_HOSTS_LABELS: LazyLock<Selector> =
     LazyLock::new(|| Selector::parse("h4").expect("valid selector"));
 
+fn unescape_entities(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(amp_idx) = rest.find('&') {
+        out.push_str(&rest[..amp_idx]);
+        let after_amp = &rest[amp_idx + 1..];
+        if let Some(semi_idx) = after_amp.find(';') {
+            if semi_idx <= 8 {
+                let entity = &after_amp[..semi_idx];
+                match entity {
+                    "amp" => out.push('&'),
+                    "apos" | "#039" | "#39" => out.push('\''),
+                    "quot" | "#034" | "#34" => out.push('"'),
+                    "lt" => out.push('<'),
+                    "gt" => out.push('>'),
+                    "ndash" | "#8211" => out.push('–'),
+                    "mdash" | "#8212" => out.push('—'),
+                    _ => {
+                        out.push('&');
+                        out.push_str(&after_amp[..=semi_idx]);
+                    }
+                }
+                rest = &after_amp[semi_idx + 1..];
+                continue;
+            }
+        }
+        out.push('&');
+        rest = after_amp;
+    }
+    out.push_str(rest);
+    out
+}
+
 fn stream_clean_text<'a>(iter: impl IntoIterator<Item = &'a str>) -> String {
     let mut out = String::new();
     let mut first = true;
@@ -43,7 +79,11 @@ fn stream_clean_text<'a>(iter: impl IntoIterator<Item = &'a str>) -> String {
             first = false;
         }
     }
-    out
+    if out.contains('&') {
+        unescape_entities(&out)
+    } else {
+        out
+    }
 }
 
 pub fn plain_text(html: &str) -> String {

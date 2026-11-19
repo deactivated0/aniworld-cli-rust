@@ -432,7 +432,63 @@ impl App {
             q.trim().to_owned()
         };
         anyhow::ensure!(!query.trim().is_empty(), "Search query cannot be empty");
-        let results = catalog::search_results(&self.net.get_search(&query)?, self.net.root())?;
+        let query_trimmed = query.trim();
+
+        // Direct URL detection (e.g. https://aniworld.to/anime/stream/frieren-beyond-journeys-end)
+        let direct_url =
+            if query_trimmed.starts_with("http://") || query_trimmed.starts_with("https://") {
+                Url::parse(query_trimmed).ok()
+            } else if let Some(stripped) = query_trimmed.strip_prefix("/anime/stream/") {
+                self.net
+                    .root()
+                    .join(&format!("/anime/stream/{stripped}"))
+                    .ok()
+            } else {
+                None
+            };
+
+        if let Some(url) = direct_url {
+            if let Ok((html, final_url)) = self.net.page(&url, None) {
+                let slug = final_url
+                    .path()
+                    .strip_prefix("/anime/stream/")
+                    .and_then(|s| s.split('/').next())
+                    .unwrap_or("")
+                    .to_string();
+                if !slug.is_empty() {
+                    let title = catalog::series_title(&html).unwrap_or_else(|| slug.clone());
+                    return Ok(Series {
+                        title,
+                        slug,
+                        url: final_url.to_string(),
+                    });
+                }
+            }
+        }
+
+        // Search API with direct slug fallback
+        let results = self
+            .net
+            .get_search(query_trimmed)
+            .ok()
+            .and_then(|body| catalog::search_results(&body, self.net.root()).ok())
+            .unwrap_or_default();
+
+        if results.is_empty() {
+            let slug = query_trimmed.trim_matches('/');
+            if let Ok(direct) = self.net.root().join(&format!("/anime/stream/{slug}")) {
+                if let Ok((html, final_url)) = self.net.page(&direct, None) {
+                    if let Some(title) = catalog::series_title(&html) {
+                        return Ok(Series {
+                            title,
+                            slug: slug.to_string(),
+                            url: final_url.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
         anyhow::ensure!(!results.is_empty(), "No series matched '{query}'");
         let labels = results.iter().map(|s| s.title.clone()).collect::<Vec<_>>();
         let index = self.pick_menu(
@@ -835,34 +891,50 @@ impl App {
                         io::stdin().read_line(&mut q)?;
                         let q = q.trim();
                         if !q.is_empty() {
-                            match self.net.get_search(q) {
-                                Ok(resp) => match catalog::search_results(&resp, self.net.root()) {
-                                    Ok(results) if !results.is_empty() => {
-                                        let labels = results
-                                            .iter()
-                                            .map(|s| s.title.clone())
-                                            .collect::<Vec<_>>();
-                                        if let Ok(idx) = self.pick_menu("Choose series", &labels, 0)
-                                        {
-                                            series = results[idx].clone();
-                                            match self.select_episode(&series, None) {
-                                                Ok(ep) => {
-                                                    remembered_language = None;
-                                                    forced_hoster = None;
-                                                    forced_language = None;
-                                                    current = ep;
-                                                    break_to_play = true;
-                                                }
-                                                Err(e) => {
-                                                    eprintln!("Could not select episode: {e}")
-                                                }
-                                            }
+                            let mut results = self
+                                .net
+                                .get_search(q)
+                                .ok()
+                                .and_then(|resp| {
+                                    catalog::search_results(&resp, self.net.root()).ok()
+                                })
+                                .unwrap_or_default();
+                            if results.is_empty() {
+                                let slug = q.trim_matches('/');
+                                if let Ok(direct) =
+                                    self.net.root().join(&format!("/anime/stream/{slug}"))
+                                {
+                                    if let Ok((html, final_url)) = self.net.page(&direct, None) {
+                                        if let Some(title) = catalog::series_title(&html) {
+                                            results.push(Series {
+                                                title,
+                                                slug: slug.to_string(),
+                                                url: final_url.to_string(),
+                                            });
                                         }
                                     }
-                                    Ok(_) => println!("No anime series found matching '{q}'."),
-                                    Err(e) => eprintln!("Search parse error: {e}"),
-                                },
-                                Err(e) => eprintln!("Search request failed: {e}"),
+                                }
+                            }
+                            if !results.is_empty() {
+                                let labels =
+                                    results.iter().map(|s| s.title.clone()).collect::<Vec<_>>();
+                                if let Ok(idx) = self.pick_menu("Choose series", &labels, 0) {
+                                    series = results[idx].clone();
+                                    match self.select_episode(&series, None) {
+                                        Ok(ep) => {
+                                            remembered_language = None;
+                                            forced_hoster = None;
+                                            forced_language = None;
+                                            current = ep;
+                                            break_to_play = true;
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Could not select episode: {e}")
+                                        }
+                                    }
+                                }
+                            } else {
+                                println!("No anime series found matching '{q}'.");
                             }
                         }
                     }
