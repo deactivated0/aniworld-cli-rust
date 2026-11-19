@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
-[Features](#-key-features) • [Installation](#-installation) • [Usage](#-usage-guide) • [Configuration](#-configuration) • [MPV Integration](#-mpv-integration--shaders) • [Architecture](#-architecture--design) • [License](#-license)
+[Features](#-key-features) • [Installation](#-installation) • [Usage](#-usage-guide) • [Configuration](#-configuration) • [MPV Integration](#-mpv-integration--shaders) • [Architecture](#-architecture--design) • [License & Independence](#-mit-license--independence-why-it-is-not-gpl) • [License](#-license)
 
 </div>
 
@@ -233,6 +233,39 @@ cargo fmt --all -- --check
 # Run linter
 cargo clippy --all-targets -- -D warnings
 ```
+
+---
+
+## ⚖️ MIT License & Independence (Why It Is NOT GPL)
+
+`aniworld-cli-rust` is released under the permissive **[MIT License](LICENSE)** and is an entirely separate, clean-room implementation from other projects in the anime streaming CLI space.
+
+### Key Distinctions from Other Projects
+
+| Feature / Aspect | `aniworld-cli-rust` (This Project) | [`dxmoc/aniworld-cli`](https://github.com/dxmoc/aniworld-cli/) | [`pystardust/ani-cli`](https://github.com/pystardust/ani-cli) |
+|---|---|---|---|
+| **License** | **MIT (Permissive)** | GPL-3.0 (Copyleft) | GPL-3.0 (Copyleft) |
+| **Language** | **Pure Native Rust (2024 Edition)** | Python 3 | POSIX Bash Shell Script |
+| **Runtime Requirements** | **None** (Single static/native binary) | Python 3, `pip`, `requests`, `bs4`, etc. | `bash`, `curl`, `grep`, `sed`, `fzf`, etc. |
+| **Target Platform / Scope** | **AniWorld** (German Dub, German Sub, English Sub) | AniWorld | Scrapes English sites (AllAnime, Gogoanime) |
+| **Code Sharing / Lineage** | **100% original Rust code**; zero imported source | Original Python codebase | Shell script codebase |
+| **Security Architecture** | Direct OS vector execution (`std::process::Command`), zero shell injection | Python subprocess calls | Shell piping & variable interpolation |
+| **Stream Probing** | Built-in concurrent HLS playlist validation | Basic HTTP check | Shell curl wrapper |
+| **Dependency Auditing** | Enforced by `cargo-deny` in CI (GPL/AGPL strictly rejected) | None | N/A |
+
+### Why MIT and Not GPL?
+
+1. **Permissive Freedom Without Viral Restrictions:**
+   The MIT license gives users and developers maximum freedom to integrate, embed, package, or distribute the application without being subject to the copyleft requirements of GPL-3.0.
+
+2. **Zero Code Sharing:**
+   `aniworld-cli-rust` does not fork, vendor, translate, or copy code from `dxmoc/aniworld-cli` or `pystardust/ani-cli`. All parsers, host extractors (VOE, Vidmoly), CLI options, and network layers were authored from the ground up in idiomatic Rust.
+
+3. **Interoperability Without Infiltration:**
+   The tool is deliberately schema-compatible with the standard `state.json` watch-history format so users can migrate painlessly, but the underlying state engine and logic are implemented using standard `serde`/`serde_json` in Rust with independent serialization.
+
+4. **Strict Permissive Dependency Enforcement:**
+   Every single dependency in `Cargo.lock` is audited using [`cargo-deny`](deny.toml) in our continuous integration pipeline. Any crate introducing GPL or AGPL copyleft terms is rejected at compile time.
 
 ---
 
