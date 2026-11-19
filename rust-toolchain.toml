@@ -1,0 +1,6 @@
+[toolchain]
+# Track the newest stable Rust compiler without stale manual pins.
+# For experimental compiler changes: rustup run nightly cargo build --release
+channel = "stable"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

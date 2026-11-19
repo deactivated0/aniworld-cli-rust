@@ -1,0 +1,17 @@
+# License policy for dependency distribution.
+# The application's source code is MIT. Dependencies retain their own licenses.
+# Disallow GPL/AGPL and unknown licenses at release time.
+[licenses]
+confidence-threshold = 0.8
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "CC0-1.0",
+  "Unlicense",
+  "OpenSSL"
+]

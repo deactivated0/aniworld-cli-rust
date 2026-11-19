@@ -1,0 +1,62 @@
+name: Rust CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: stable on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - name: Format source (rustfmt)
+        run: cargo fmt --all
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --all-targets
+      - name: Build
+        run: cargo build --release
+      - name: CLI smoke check
+        run: cargo run -- --help
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aniworld-cli-${{ matrix.os }}
+          path: |
+            target/release/aniworld
+            target/release/aniworld.exe
+          if-no-files-found: error
+
+  nightly:
+    name: bleeding-edge nightly (nonblocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly
+      - run: cargo +nightly test --all-targets
+      - run: cargo +nightly build --release
+
+  licenses:
+    name: Dependency license policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo generate-lockfile
+      - run: cargo install cargo-deny --locked
+      - run: cargo deny check licenses
