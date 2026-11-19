@@ -9,7 +9,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
-[Features](#-key-features) • [Installation](#-installation) • [Usage](#-usage-guide) • [Configuration](#-configuration) • [MPV Integration](#-mpv-integration--shaders) • [Architecture](#-architecture--design) • [License & Independence](#-mit-license--independence-why-it-is-not-gpl) • [License](#-license)
+[Features](#-key-features) • [Installation](#-installation) • [Releases](#-pre-built-releases) • [Usage](#-usage-guide) • [Configuration](#-configuration) • [MPV Integration](#-mpv-integration--shaders) • [Architecture](#-architecture--design) • [License & Independence](#-mit-license--independence-why-it-is-not-gpl) • [AI Maintenance](#-ai-agent-maintenance-skillmd) • [License](#-license)
 
 </div>
 
@@ -37,49 +37,238 @@ Unlike heavy script-based alternatives or bloated electron wrappers, `aniworld-c
 
 ## 📦 Requirements
 
-- **Rust toolchain:** `stable` (Rust 1.100.0+ recommended)
-- **Video Player:** **[mpv](https://mpv.io/)** installed and accessible via `PATH` (or specified via `--player`)
-- **Operating System:** Linux, macOS, or Windows
+- **Rust toolchain:** `stable` (Rust 1.100.0+ recommended) if building from source
+- **Video Player:** **[mpv](https://mpv.io/)** installed and accessible via `PATH` (or configured via `--player`)
+- **Operating Systems Supported:** Linux (all distros), macOS, Windows, FreeBSD, NixOS
 
 ---
 
-## 🚀 Installation
+## 📥 Pre-Built Releases
 
-### Option 1: Install via Cargo (Recommended)
+Download precompiled standalone binaries directly from the **[GitHub Releases](https://github.com/deactivated0/aniworld-cli-rust/releases)** page:
+
+| Platform | Target Architecture | Archive |
+|---|---|---|
+| **Linux** | `x86_64-unknown-linux-gnu` | [Download `.tar.gz`](https://github.com/deactivated0/aniworld-cli-rust/releases/latest) |
+| **macOS (Apple Silicon)** | `aarch64-apple-darwin` | [Download `.tar.gz`](https://github.com/deactivated0/aniworld-cli-rust/releases/latest) |
+| **macOS (Intel)** | `x86_64-apple-darwin` | [Download `.tar.gz`](https://github.com/deactivated0/aniworld-cli-rust/releases/latest) |
+| **Windows** | `x86_64-pc-windows-msvc` | [Download `.zip`](https://github.com/deactivated0/aniworld-cli-rust/releases/latest) |
+
+### Quick Install (Linux & macOS)
 
 ```bash
-cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+# Download and install the latest binary to /usr/local/bin
+curl -sSL https://raw.githubusercontent.com/deactivated0/aniworld-cli-rust/main/scripts/install.sh | bash
 ```
-
-This installs the binary as `aniworld` directly into `~/.cargo/bin`.
+*(Or extract the release archive and move `aniworld` into any directory on your `$PATH`)*
 
 ---
 
-### Option 2: Build from Source
+## 🚀 Installation by Platform
+
+### 🐧 Linux (All Major Distributions)
+
+Before installing, ensure **`mpv`** is installed on your distribution:
+
+<details open>
+<summary><b>1. Arch Linux / Manjaro / EndeavourOS</b></summary>
+
+```bash
+# Install mpv and Rust toolchain
+sudo pacman -S mpv rustup
+rustup default stable
+
+# Install aniworld-cli-rust via cargo
+cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+```
+*(AUR package `aniworld-cli-rust-bin` / `aniworld-cli-rust-git` can also be packaged using `makepkg -si`)*
+</details>
+
+<details>
+<summary><b>2. Ubuntu / Debian / Pop!_OS / Linux Mint</b></summary>
+
+```bash
+# Install mpv and build dependencies
+sudo apt update
+sudo apt install -y mpv curl build-essential pkg-config libssl-dev
+
+# Install Rust (if not already installed)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Install aniworld-cli-rust
+cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+```
+</details>
+
+<details>
+<summary><b>3. Fedora / RHEL / CentOS Stream</b></summary>
+
+```bash
+# Install mpv (RPM Fusion) and tools
+sudo dnf install -y mpv gcc pkgconf-pkg-config openssl-devel
+
+# Install via Cargo
+cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+```
+</details>
+
+<details>
+<summary><b>4. openSUSE (Tumbleweed / Leap)</b></summary>
+
+```bash
+sudo zypper install -y mpv rust cargo gcc pkg-config libopenssl-devel
+cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+```
+</details>
+
+<details>
+<summary><b>5. Alpine Linux</b></summary>
+
+```bash
+sudo apk add mpv rust cargo build-base pkgconf openssl-dev
+cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+```
+</details>
+
+<details>
+<summary><b>6. Void Linux</b></summary>
+
+```bash
+sudo xbps-install -S mpv rust cargo base-devel pkg-config openssl-devel
+cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+```
+</details>
+
+<details>
+<summary><b>7. Gentoo Linux</b></summary>
+
+```bash
+sudo emerge --ask media-video/mpv dev-lang/rust
+cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+```
+</details>
+
+---
+
+### ❄️ NixOS & Nix (With Flakes)
+
+`aniworld-cli-rust` provides native Nix Flake support out of the box with zero compilation configuration needed.
+
+#### Run directly without installing:
+
+```bash
+nix run github:deactivated0/aniworld-cli-rust -- "frieren"
+```
+
+#### Install to user profile:
+
+```bash
+nix profile install github:deactivated0/aniworld-cli-rust
+```
+
+#### Add to NixOS Configuration (`flake.nix`):
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    aniworld-cli.url = "github:deactivated0/aniworld-cli-rust";
+  };
+
+  outputs = { self, nixpkgs, aniworld-cli, ... }: {
+    nixosConfigurations.myhostname = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ({ pkgs, ... }: {
+          environment.systemPackages = [
+            pkgs.mpv
+            aniworld-cli.packages.${pkgs.system}.default
+          ];
+        })
+      ];
+    };
+  };
+}
+```
+
+#### Or use the Nix development shell:
+
+```bash
+git clone https://github.com/deactivated0/aniworld-cli-rust.git
+cd aniworld-cli-rust
+nix develop
+cargo build --release
+```
+
+---
+
+### 🍎 macOS
+
+1. Install **[Homebrew](https://brew.sh/)** and **`mpv`**:
+   ```bash
+   brew install mpv rustup
+   rustup-init -y
+   ```
+
+2. Install `aniworld-cli-rust`:
+   ```bash
+   cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+   ```
+
+*(Alternatively, grab the precompiled macOS Apple Silicon or Intel binary from [GitHub Releases](https://github.com/deactivated0/aniworld-cli-rust/releases).)*
+
+---
+
+### 🪟 Windows
+
+1. Install **`mpv`** using your favorite package manager:
+   ```powershell
+   # Via winget
+   winget install mpv.net
+   # Or via scoop
+   scoop install mpv
+   ```
+
+2. Install `aniworld-cli-rust`:
+   ```powershell
+   # Option A: Download pre-built zip from GitHub Releases
+   # Unzip aniworld.exe and place it in your PATH (e.g. C:\Windows\System32 or ~/bin)
+
+   # Option B: Install via Cargo
+   cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+   ```
+
+*`aniworld-cli-rust` automatically detects `mpv.exe` in your `%PATH%` or bundled adjacent to the executable.*
+
+---
+
+### 😈 FreeBSD
+
+1. Install prerequisites:
+   ```sh
+   pkg install mpv rust
+   ```
+
+2. Build and install:
+   ```sh
+   cargo install --git https://github.com/deactivated0/aniworld-cli-rust.git
+   ```
+
+---
+
+### 🔨 Build from Git Source
 
 ```bash
 # Clone the repository
 git clone https://github.com/deactivated0/aniworld-cli-rust.git
 cd aniworld-cli-rust
 
-# Build optimized release binary
+# Build release binary
 cargo build --release
 
-# Optional: Install to Cargo bin directory
+# Install locally
 cargo install --path .
-```
-
-The compiled binary will be located at `target/release/aniworld` (or `target/release/aniworld.exe` on Windows).
-
----
-
-### Option 3: Nix Development Shell
-
-A reproducible `flake.nix` is provided for Nix users:
-
-```bash
-nix develop
-cargo build --release
 ```
 
 ---
@@ -266,6 +455,19 @@ cargo clippy --all-targets -- -D warnings
 
 4. **Strict Permissive Dependency Enforcement:**
    Every single dependency in `Cargo.lock` is audited using [`cargo-deny`](deny.toml) in our continuous integration pipeline. Any crate introducing GPL or AGPL copyleft terms is rejected at compile time.
+
+---
+
+## 🤖 AI Agent Maintenance (SKILL.md)
+
+This repository includes a dedicated **[`SKILL.md`](SKILL.md)** file designed to guide AI coding assistants (such as Antigravity, Claude Code, Cursor, Copilot, Codex, Aider) in maintaining, extending, and debugging the project:
+
+- **Architecture Map:** Detailed overview of modules (`main`, `catalog`, `resolve`, `net`, `player`, `options`, `state`).
+- **Standard Workflows:** Step-by-step recipes for adding streaming providers, updating HTML selectors, and auditing dependencies.
+- **Strict Invariants:** Enforces MIT-only dependency rules, zero shell-injection policy, and `state.json` backward compatibility.
+- **Quality Gates:** Ready-to-run verification scripts matching CI requirements.
+
+Consult [SKILL.md](SKILL.md) whenever prompting an AI assistant to modify this codebase.
 
 ---
 

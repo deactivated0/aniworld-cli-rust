@@ -7,21 +7,19 @@ use std::{
     process::Command,
 };
 
+#[cfg(unix)]
 fn runnable(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        path.metadata()
+    use std::os::unix::fs::PermissionsExt;
+    path.is_file()
+        && path
+            .metadata()
             .map(|m| m.permissions().mode() & 0o111 != 0)
             .unwrap_or(false)
-    }
-    #[cfg(not(unix))]
-    {
-        true
-    }
+}
+
+#[cfg(not(unix))]
+fn runnable(path: &Path) -> bool {
+    path.is_file()
 }
 
 pub fn find_player(explicit: Option<&str>) -> Option<PathBuf> {
@@ -33,13 +31,12 @@ pub fn find_player(explicit: Option<&str>) -> Option<PathBuf> {
         return from_path(name);
     }
     #[cfg(target_os = "windows")]
-    if let Ok(exe) = env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            let bundled = parent.join("mpv").join("mpv.exe");
-            if runnable(&bundled) {
-                return Some(bundled);
-            }
-        }
+    if let Some(bundled) = env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.join("mpv").join("mpv.exe")))
+        .filter(|p| runnable(p))
+    {
+        return Some(bundled);
     }
     from_path("mpv")
 }
