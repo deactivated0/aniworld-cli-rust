@@ -63,6 +63,13 @@ pub fn location() -> PathBuf {
     DEFAULT_STATE_FILE.clone()
 }
 
+pub fn config_dir() -> PathBuf {
+    location()
+        .parent()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
 pub fn load() -> State {
     let path = location();
     let Ok(file) = fs::File::open(&path) else {

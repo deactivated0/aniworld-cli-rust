@@ -4,6 +4,7 @@ mod net;
 mod options;
 mod player;
 mod resolve;
+mod shader;
 mod state;
 
 use std::{
@@ -44,9 +45,9 @@ pub const AFTER_PLAYBACK_ROWS: &[MenuRow] = &[
     MenuRow::Action("Select episode"),
     MenuRow::Action("Select season"),
     MenuRow::Action("Jump to episode"),
-    MenuRow::Action("Search another anime"),
-    MenuRow::Action("Browse anime catalog"),
-    MenuRow::Action("Browse by genre"),
+    MenuRow::Action("Search anime"),
+    MenuRow::Action("Anime catalog"),
+    MenuRow::Action("Search genre"),
     MenuRow::Action("Continue another anime"),
     MenuRow::Blank,
     MenuRow::Header("── STREAM & LANGUAGE ─────────────"),
@@ -62,8 +63,6 @@ pub const AFTER_PLAYBACK_ROWS: &[MenuRow] = &[
     MenuRow::Action("Select audio track"),
     MenuRow::Action("Select subtitle track"),
     MenuRow::Action("Toggle auto-next"),
-    MenuRow::Action("Toggle skip intro"),
-    MenuRow::Action("Toggle skip outro"),
     MenuRow::Action("Player settings"),
     MenuRow::Blank,
     MenuRow::Header("── VIDEO ENHANCEMENTS ────────────"),
@@ -258,8 +257,6 @@ struct App {
     state: State,
     page_cache: HashMap<(String, u32), Vec<Episode>>,
     playback_speed: Option<String>,
-    skip_intro: bool,
-    skip_outro: bool,
     anime4k: bool,
     anime4k_preset: Option<String>,
     video_filter: Option<String>,
@@ -280,8 +277,6 @@ impl App {
             state: state::load(),
             page_cache: HashMap::new(),
             playback_speed: None,
-            skip_intro: false,
-            skip_outro: false,
             anime4k: false,
             anime4k_preset: None,
             video_filter: None,
@@ -979,9 +974,6 @@ impl App {
         if let Some(spd) = &self.playback_speed {
             args.push(format!("--speed={spd}"));
         }
-        if self.skip_intro {
-            args.push("--start=85".to_string());
-        }
         if self.fullscreen && !args.iter().any(|a| a == "--fs" || a == "--fullscreen") {
             args.push("--fs".to_string());
         }
@@ -1001,14 +993,22 @@ impl App {
                 args.push(format!("--sid={sid}"));
             }
         }
-        if self.anime4k {
-            let preset = self
-                .anime4k_preset
-                .as_deref()
-                .unwrap_or("~~/shaders/Anime4K_Upscale_Denoise_CNN_x2_M.glsl");
-            args.push(format!("--glsl-shaders={preset}"));
-        } else if let Some(shader) = &self.custom_shader {
-            args.push(format!("--glsl-shaders={shader}"));
+        if self.anime4k || self.custom_shader.is_some() {
+            if !args.iter().any(|a| a.starts_with("--vo=")) {
+                args.push("--vo=gpu-next,gpu".to_string());
+            }
+
+            let shader_target = if let Some(cs) = &self.custom_shader {
+                cs.as_str()
+            } else if let Some(p) = &self.anime4k_preset {
+                p.as_str()
+            } else {
+                "anime4k"
+            };
+
+            if let Some(path) = shader::resolve_shader_path(shader_target) {
+                args.push(format!("--glsl-shader={}", path.display()));
+            }
         }
         if let Some(filter) = &self.video_filter {
             args.push(filter.clone());
@@ -1206,48 +1206,54 @@ impl App {
                             println!("Invalid episode number.");
                         }
                     }
-                    Some("Search another anime") => match self.search_anime_interactive() {
-                        Ok(s) => match self.select_episode(&s, None) {
-                            Ok(ep) => {
-                                series = s;
-                                remembered_language = None;
-                                forced_hoster = None;
-                                forced_language = None;
-                                current = ep;
-                                break_to_play = true;
-                            }
-                            Err(e) => eprintln!("Could not select episode: {e}"),
-                        },
-                        Err(e) => eprintln!("Search error: {e}"),
-                    },
-                    Some("Browse anime catalog") => match self.browse_catalog() {
-                        Ok(s) => match self.select_episode(&s, None) {
-                            Ok(ep) => {
-                                series = s;
-                                remembered_language = None;
-                                forced_hoster = None;
-                                forced_language = None;
-                                current = ep;
-                                break_to_play = true;
-                            }
-                            Err(e) => eprintln!("Could not select episode: {e}"),
-                        },
-                        Err(e) => eprintln!("Catalog error: {e}"),
-                    },
-                    Some("Browse by genre") => match self.browse_genres(None) {
-                        Ok(s) => match self.select_episode(&s, None) {
-                            Ok(ep) => {
-                                series = s;
-                                remembered_language = None;
-                                forced_hoster = None;
-                                forced_language = None;
-                                current = ep;
-                                break_to_play = true;
-                            }
-                            Err(e) => eprintln!("Could not select episode: {e}"),
-                        },
-                        Err(e) => eprintln!("Genre browse error: {e}"),
-                    },
+                    Some("Search anime") | Some("Search another anime") => {
+                        match self.search_anime_interactive() {
+                            Ok(s) => match self.select_episode(&s, None) {
+                                Ok(ep) => {
+                                    series = s;
+                                    remembered_language = None;
+                                    forced_hoster = None;
+                                    forced_language = None;
+                                    current = ep;
+                                    break_to_play = true;
+                                }
+                                Err(e) => eprintln!("Could not select episode: {e}"),
+                            },
+                            Err(e) => eprintln!("Search error: {e}"),
+                        }
+                    }
+                    Some("Anime catalog") | Some("Browse anime catalog") => {
+                        match self.browse_catalog() {
+                            Ok(s) => match self.select_episode(&s, None) {
+                                Ok(ep) => {
+                                    series = s;
+                                    remembered_language = None;
+                                    forced_hoster = None;
+                                    forced_language = None;
+                                    current = ep;
+                                    break_to_play = true;
+                                }
+                                Err(e) => eprintln!("Could not select episode: {e}"),
+                            },
+                            Err(e) => eprintln!("Catalog error: {e}"),
+                        }
+                    }
+                    Some("Search genre") | Some("Browse by genre") => {
+                        match self.browse_genres(None) {
+                            Ok(s) => match self.select_episode(&s, None) {
+                                Ok(ep) => {
+                                    series = s;
+                                    remembered_language = None;
+                                    forced_hoster = None;
+                                    forced_language = None;
+                                    current = ep;
+                                    break_to_play = true;
+                                }
+                                Err(e) => eprintln!("Could not select episode: {e}"),
+                            },
+                            Err(e) => eprintln!("Genre browse error: {e}"),
+                        }
+                    }
                     Some("Continue another anime") => {
                         let recent = self.state.recent();
                         if recent.is_empty() {
@@ -1480,71 +1486,40 @@ impl App {
                             }
                         );
                     }
-                    Some("Toggle skip intro") => {
-                        self.skip_intro = !self.skip_intro;
-                        println!(
-                            "Skip intro (85s offset) is now {}",
-                            if self.skip_intro { "ON" } else { "OFF" }
-                        );
-                    }
-                    Some("Toggle skip outro") => {
-                        self.skip_outro = !self.skip_outro;
-                        println!(
-                            "Skip outro is now {}",
-                            if self.skip_outro { "ON" } else { "OFF" }
-                        );
-                    }
-                    Some("Player settings") => {
-                        let settings_choices = vec![
-                            format!(
-                                "Toggle fullscreen (currently: {})",
-                                if self.fullscreen { "ON" } else { "OFF" }
-                            ),
-                            format!("Set volume (currently: {}%)", self.volume.unwrap_or(100)),
-                        ];
-                        if let Ok(idx) = self.pick_menu("Player settings", &settings_choices, 0) {
-                            if idx == 0 {
-                                self.fullscreen = !self.fullscreen;
-                                println!(
-                                    "Fullscreen: {}",
-                                    if self.fullscreen { "ON" } else { "OFF" }
-                                );
-                            } else {
-                                print!("Enter volume (0-150): ");
-                                io::stdout().flush()?;
-                                let mut input = String::new();
-                                io::stdin().read_line(&mut input)?;
-                                if let Ok(vol) = input.trim().parse::<u32>() {
-                                    self.volume = Some(vol.min(150));
-                                    println!("Volume set to: {}%", vol.min(150));
-                                }
-                            }
-                        }
-                    }
                     Some("Toggle Anime4K") => {
                         self.anime4k = !self.anime4k;
-                        println!(
-                            "Anime4K upscaling shader: {}",
-                            if self.anime4k { "ENABLED" } else { "DISABLED" }
-                        );
+                        if self.anime4k {
+                            let _ = shader::ensure_shaders_installed();
+                            let target = self.anime4k_preset.as_deref().unwrap_or("anime4k");
+                            if let Some(p) = shader::resolve_shader_path(target) {
+                                println!("✓ Video shader: ENABLED ({})", p.display());
+                            } else {
+                                println!("✓ Video shader: ENABLED (--vo=gpu-next,gpu)");
+                            }
+                        } else {
+                            println!("Video shader: DISABLED");
+                        }
                     }
                     Some("Select Anime4K preset") => {
-                        let presets = vec![
-                            "Anime4K Mode A (Fast Upscale)".to_string(),
-                            "Anime4K Mode B (Reconstruction + Upscale)".to_string(),
-                            "Anime4K Mode C (Denoise + Deblur + Upscale)".to_string(),
-                            "Anime4K Ultra Fast".to_string(),
-                        ];
-                        if let Ok(idx) = self.pick_menu("Anime4K Preset", &presets, 0) {
-                            let shader = match idx {
-                                0 => "~~/shaders/Anime4K_ModeA.glsl",
-                                1 => "~~/shaders/Anime4K_ModeB.glsl",
-                                2 => "~~/shaders/Anime4K_ModeC.glsl",
-                                _ => "~~/shaders/Anime4K_Upscale_Denoise_CNN_x2_M.glsl",
-                            };
-                            self.anime4k_preset = Some(shader.to_string());
+                        let _ = shader::ensure_shaders_installed();
+                        let options = shader::PRESETS
+                            .iter()
+                            .map(|p| p.name.to_string())
+                            .collect::<Vec<_>>();
+                        if let Ok(idx) = self.pick_menu("Select Shader Preset", &options, 0) {
+                            let preset = &shader::PRESETS[idx];
+                            self.anime4k_preset = Some(preset.id.to_string());
                             self.anime4k = true;
-                            println!("Anime4K preset set to: {}", presets[idx]);
+                            self.custom_shader = None;
+                            if let Some(p) = shader::resolve_shader_path(preset.id) {
+                                println!(
+                                    "✓ Set video shader to: {} ({})",
+                                    preset.name,
+                                    p.display()
+                                );
+                            } else {
+                                println!("✓ Set video shader to: {}", preset.name);
+                            }
                         }
                     }
                     Some("Video filters") => {
@@ -1565,15 +1540,69 @@ impl App {
                         }
                     }
                     Some("Shader settings") => {
-                        print!("Enter custom GLSL shader path: ");
-                        io::stdout().flush()?;
-                        let mut input = String::new();
-                        io::stdin().read_line(&mut input)?;
-                        let path = input.trim();
-                        if !path.is_empty() {
-                            self.custom_shader = Some(path.to_string());
-                            self.anime4k = false;
-                            println!("Custom shader set: {path}");
+                        let _ = shader::ensure_shaders_installed();
+                        let dir = state::config_dir().join("shaders");
+                        let shader_choices = vec![
+                            "Choose from bundled anime presets".to_string(),
+                            "Enter custom GLSL shader path".to_string(),
+                            format!("View installed shaders directory ({})", dir.display()),
+                            "Disable all video shaders".to_string(),
+                        ];
+                        if let Ok(idx) = self.pick_menu("Shader Settings", &shader_choices, 0) {
+                            match idx {
+                                0 => {
+                                    let options = shader::PRESETS
+                                        .iter()
+                                        .map(|p| p.name.to_string())
+                                        .collect::<Vec<_>>();
+                                    if let Ok(s_idx) = self.pick_menu("Select Preset", &options, 0)
+                                    {
+                                        let preset = &shader::PRESETS[s_idx];
+                                        self.anime4k_preset = Some(preset.id.to_string());
+                                        self.anime4k = true;
+                                        self.custom_shader = None;
+                                        if let Some(p) = shader::resolve_shader_path(preset.id) {
+                                            println!(
+                                                "✓ Set video shader to: {} ({})",
+                                                preset.name,
+                                                p.display()
+                                            );
+                                        } else {
+                                            println!("✓ Set video shader to: {}", preset.name);
+                                        }
+                                    }
+                                }
+                                1 => {
+                                    print!("Enter custom GLSL shader path: ");
+                                    io::stdout().flush()?;
+                                    let mut input = String::new();
+                                    io::stdin().read_line(&mut input)?;
+                                    let path = input.trim();
+                                    if !path.is_empty() {
+                                        if let Some(resolved) = shader::resolve_shader_path(path) {
+                                            self.custom_shader =
+                                                Some(resolved.display().to_string());
+                                            self.anime4k = true;
+                                            println!("✓ Custom shader set: {}", resolved.display());
+                                        } else {
+                                            println!("Shader file not found: {path}");
+                                        }
+                                    }
+                                }
+                                2 => {
+                                    println!("Shaders directory: {}", dir.display());
+                                    if let Ok(entries) = std::fs::read_dir(&dir) {
+                                        for entry in entries.flatten() {
+                                            println!("  - {}", entry.file_name().to_string_lossy());
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    self.anime4k = false;
+                                    self.custom_shader = None;
+                                    println!("✓ All shaders disabled.");
+                                }
+                            }
                         }
                     }
                     Some("Open watchlist") => {

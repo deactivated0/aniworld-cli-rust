@@ -13,7 +13,7 @@
       in {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "aniworld-cli-rust";
-          version = "0.2.2";
+          version = "0.2.3";
           src = ./.;
           cargoLock = {
             lockFile = ./Cargo.lock;

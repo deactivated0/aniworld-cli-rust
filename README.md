@@ -380,9 +380,9 @@ Resolved via VOE (ger-dub)
   Select episode
   Select season
   Jump to episode
-  Search another anime
-  Browse anime catalog
-  Browse by genre
+  Search anime
+  Anime catalog
+  Search genre
   Continue another anime
 
   ── STREAM & LANGUAGE ─────────────
@@ -398,8 +398,6 @@ Resolved via VOE (ger-dub)
   Select audio track
   Select subtitle track
   Toggle auto-next
-  Toggle skip intro
-  Toggle skip outro
   Player settings
 
   ── VIDEO ENHANCEMENTS ────────────

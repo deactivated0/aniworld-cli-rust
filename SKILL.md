@@ -22,6 +22,7 @@ The project is structured as a single high-performance binary crate (`aniworld`)
 | **Player Execution** | `src/player.rs` | Safe, shell-less invocation of `mpv` via `std::process::Command`. Resolves player binary across OS platforms. |
 | **CLI Options** | `src/options.rs` | `clap` v4 derive definitions (`--catalog`, `--genre`), environment variable fallbacks (`ANIWORLD_*`), language and hoster priority parsing. |
 | **State & Watchlist** | `src/state.rs` | Schema-compatible `state.json` watch history & favorites persistence; handles platform-specific XDG / AppData config paths. |
+| **Video Shaders** | `src/shader.rs` | Bundled high-performance GLSL shaders for mpv (Anime4K, CAS adaptive sharpen, line darken, denoise, vivid), automatic installation, and shader resolution. |
 | **Data Models** | `src/model.rs` | Core domain structs: `Series`, `Episode`, `Host`, `Stream`, `Progress`, `Genre`. |
 
 ---
