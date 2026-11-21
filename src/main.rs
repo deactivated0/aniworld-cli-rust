@@ -217,7 +217,7 @@ fn copy_to_clipboard(text: &str) {
             child.wait()
         });
     if wayland.is_ok() {
-        println!("✓ Copied to clipboard (Wayland): {text}");
+        println!("[OK] Copied to clipboard (Wayland): {text}");
         return;
     }
 
@@ -232,11 +232,11 @@ fn copy_to_clipboard(text: &str) {
             child.wait()
         });
     if x11.is_ok() {
-        println!("✓ Copied to clipboard (X11): {text}");
+        println!("[OK] Copied to clipboard (X11): {text}");
         return;
     }
 
-    println!("📋 URL: {text}");
+    println!("URL: {text}");
 }
 
 fn open_browser(url: &str) {
@@ -248,7 +248,7 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new("open").arg(url).spawn();
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-    println!("🌐 Opened in browser: {url}");
+    println!("Opened in browser: {url}");
 }
 
 struct App {
@@ -477,27 +477,27 @@ impl App {
 
         let options = vec![
             if self.german() {
-                "🔤 Alphabetisch durchsuchen (A-Z, 0-9)"
+                "Alphabetisch durchsuchen (A-Z, 0-9)"
             } else {
-                "🔤 Browse Alphabetically (A-Z, 0-9)"
+                "Browse Alphabetically (A-Z, 0-9)"
             }
             .to_string(),
             if self.german() {
-                "🔥 Beliebte Animes (Popular)"
+                "Beliebte Animes (Popular)"
             } else {
-                "🔥 Popular Animes"
+                "Popular Animes"
             }
             .to_string(),
             if self.german() {
-                "🎭 Nach Genre durchsuchen"
+                "Nach Genre durchsuchen"
             } else {
-                "🎭 Browse by Genre"
+                "Browse by Genre"
             }
             .to_string(),
             if self.german() {
-                "🔍 Anime suchen"
+                "Anime suchen"
             } else {
-                "🔍 Search anime by name"
+                "Search anime by name"
             }
             .to_string(),
         ];
@@ -533,7 +533,7 @@ impl App {
 
         let path = format!("/katalog/{letter}");
         let url = self.net.root().join(&path)?;
-        println!("⏳ Loading catalog for '{letter}'...");
+        println!("Loading catalog for '{letter}'...");
         let (html, _) = self.net.page(&url, None)?;
         let animes = catalog::parse_catalog_page(&html, self.net.root());
         anyhow::ensure!(!animes.is_empty(), "No anime found for letter '{letter}'");
@@ -543,7 +543,7 @@ impl App {
         }
 
         let mut titles = Vec::with_capacity(animes.len() + 1);
-        titles.push(format!("🔍 Filter / Search within '{letter}'"));
+        titles.push(format!("[Filter / Search within '{letter}']"));
         for s in &animes {
             titles.push(s.title.clone());
         }
@@ -576,7 +576,7 @@ impl App {
 
     fn browse_popular(&self) -> Result<Series> {
         let url = self.net.root().join("/beliebte-animes")?;
-        println!("⏳ Loading popular animes...");
+        println!("Loading popular animes...");
         let (html, _) = self.net.page(&url, None)?;
         let animes = catalog::parse_catalog_page(&html, self.net.root());
         anyhow::ensure!(!animes.is_empty(), "No popular anime found");
@@ -596,7 +596,7 @@ impl App {
 
     fn browse_genres(&self, direct_filter: Option<&str>) -> Result<Series> {
         let url = self.net.root().join("/animes")?;
-        println!("⏳ Loading anime genres...");
+        println!("Loading anime genres...");
         let (html, _) = self.net.page(&url, None)?;
         let genres = catalog::parse_genres(&html, self.net.root());
         anyhow::ensure!(!genres.is_empty(), "No genres found on AniWorld");
@@ -636,7 +636,7 @@ impl App {
 
         let mut titles = Vec::with_capacity(selected_genre.animes.len() + 1);
         titles.push(format!(
-            "🔍 Filter / Search within '{}'",
+            "[Filter / Search within '{}']",
             selected_genre.name
         ));
         for s in &selected_genre.animes {
@@ -724,39 +724,39 @@ impl App {
 
         let main_choices = vec![
             if self.german() {
-                "🔍 Anime suchen"
+                "Anime suchen"
             } else {
-                "🔍 Search animes"
+                "Search animes"
             }
             .to_string(),
             if self.german() {
-                "📚 Anime-Katalog (A-Z / Beliebt)"
+                "Anime-Katalog (A-Z / Beliebt)"
             } else {
-                "📚 Anime Catalog (A-Z / Popular)"
+                "Anime Catalog (A-Z / Popular)"
             }
             .to_string(),
             if self.german() {
-                "🎭 Nach Genre durchsuchen"
+                "Nach Genre durchsuchen"
             } else {
-                "🎭 Browse by Genre"
+                "Browse by Genre"
             }
             .to_string(),
             if self.german() {
-                "📑 Merkliste öffnen"
+                "Merkliste öffnen"
             } else {
-                "📑 Watchlist"
+                "Watchlist"
             }
             .to_string(),
             if self.german() {
-                "★ Favoriten öffnen"
+                "Favoriten öffnen"
             } else {
-                "★ Favorites"
+                "Favorites"
             }
             .to_string(),
             if self.german() {
-                "📜 Verlauf anzeigen"
+                "Verlauf anzeigen"
             } else {
-                "📜 Watch History"
+                "Watch History"
             }
             .to_string(),
         ];
@@ -813,7 +813,7 @@ impl App {
                 if items.is_empty() {
                     println!("No watch history yet.");
                 } else {
-                    println!("\n📜 Watch History:");
+                    println!("\nWatch History:");
                     for (_, p) in &items {
                         println!(
                             "  {}  S{:02}E{:02}  {}",
@@ -832,17 +832,40 @@ impl App {
         if options.len() == 1 || self.opts.no_menu || self.opts.json {
             return Ok(0);
         }
-        let term_height = console::Term::stderr().size().0 as usize;
+        let term = console::Term::stderr();
+        let (term_height, term_width) = term.size();
+        let term_height = term_height as usize;
+        let term_width = term_width as usize;
+
         let max_len = if term_height >= 12 {
             term_height.saturating_sub(4).clamp(6, 12)
         } else {
             8
         };
         let default_idx = default.min(options.len() - 1);
+
+        let max_item_len = if term_width > 12 {
+            term_width.saturating_sub(8)
+        } else {
+            72
+        };
+        let truncated: Vec<String> = options
+            .iter()
+            .map(|opt| {
+                if opt.chars().count() > max_item_len {
+                    let mut s: String = opt.chars().take(max_item_len.saturating_sub(3)).collect();
+                    s.push_str("...");
+                    s
+                } else {
+                    opt.clone()
+                }
+            })
+            .collect();
+
         Select::with_theme(&ColorfulTheme::default())
             .with_prompt(prompt)
             .default(default_idx)
-            .items(options)
+            .items(&truncated)
             .max_length(max_len)
             .interact_opt()?
             .context("Selection cancelled")
@@ -1026,7 +1049,7 @@ impl App {
 
         loop {
             if !self.opts.json {
-                println!("\n▶ {}  {}", series.title, current.display());
+                println!("\nPlaying: {}  {}", series.title, current.display());
             }
             let hosts = self.episode_hosts(&current)?;
             let chosen_lang = if let Some(fl) = forced_language.take() {
@@ -1167,7 +1190,7 @@ impl App {
                             if !eps.is_empty() {
                                 let e_idx = (now / 7) % eps.len();
                                 current = eps[e_idx].clone();
-                                println!("🎲 Selected random episode: {}", current.display());
+                                println!("Selected random episode: {}", current.display());
                                 break_to_play = true;
                             }
                         }
@@ -1373,7 +1396,7 @@ impl App {
                             }
                             if let Some((h, dur)) = fastest {
                                 println!(
-                                    "⚡ Fastest hoster: {} ({} in {:.2?})",
+                                    "Fastest hoster: {} ({} in {:.2?})",
                                     h.name, h.language, dur
                                 );
                                 forced_hoster = Some(h.name.clone());
@@ -1392,7 +1415,7 @@ impl App {
                     }
                     Some("Test all hosters") => match self.episode_hosts(&current) {
                         Ok(hosts) => {
-                            println!("\n🔍 Hoster Status Check:");
+                            println!("\nHoster Status Check:");
                             for h in &hosts {
                                 match self
                                     .net
@@ -1492,9 +1515,9 @@ impl App {
                             let _ = shader::ensure_shaders_installed();
                             let target = self.anime4k_preset.as_deref().unwrap_or("anime4k");
                             if let Some(p) = shader::resolve_shader_path(target) {
-                                println!("✓ Video shader: ENABLED ({})", p.display());
+                                println!("[OK] Video shader: ENABLED ({})", p.display());
                             } else {
-                                println!("✓ Video shader: ENABLED (--vo=gpu-next,gpu)");
+                                println!("[OK] Video shader: ENABLED (--vo=gpu-next,gpu)");
                             }
                         } else {
                             println!("Video shader: DISABLED");
@@ -1513,12 +1536,12 @@ impl App {
                             self.custom_shader = None;
                             if let Some(p) = shader::resolve_shader_path(preset.id) {
                                 println!(
-                                    "✓ Set video shader to: {} ({})",
+                                    "[OK] Set video shader to: {} ({})",
                                     preset.name,
                                     p.display()
                                 );
                             } else {
-                                println!("✓ Set video shader to: {}", preset.name);
+                                println!("[OK] Set video shader to: {}", preset.name);
                             }
                         }
                     }
@@ -1534,6 +1557,7 @@ impl App {
                                 1 => Some("--contrast=10".to_string()),
                                 2 => Some("--saturation=15".to_string()),
                                 3 => Some("--gamma=5".to_string()),
+                                4 => None,
                                 _ => None,
                             };
                             println!("Video filter set to: {}", filters[idx]);
@@ -1563,12 +1587,12 @@ impl App {
                                         self.custom_shader = None;
                                         if let Some(p) = shader::resolve_shader_path(preset.id) {
                                             println!(
-                                                "✓ Set video shader to: {} ({})",
+                                                "[OK] Set video shader to: {} ({})",
                                                 preset.name,
                                                 p.display()
                                             );
                                         } else {
-                                            println!("✓ Set video shader to: {}", preset.name);
+                                            println!("[OK] Set video shader to: {}", preset.name);
                                         }
                                     }
                                 }
@@ -1583,7 +1607,10 @@ impl App {
                                             self.custom_shader =
                                                 Some(resolved.display().to_string());
                                             self.anime4k = true;
-                                            println!("✓ Custom shader set: {}", resolved.display());
+                                            println!(
+                                                "[OK] Custom shader set: {}",
+                                                resolved.display()
+                                            );
                                         } else {
                                             println!("Shader file not found: {path}");
                                         }
@@ -1600,7 +1627,7 @@ impl App {
                                 _ => {
                                     self.anime4k = false;
                                     self.custom_shader = None;
-                                    println!("✓ All shaders disabled.");
+                                    println!("[OK] All shaders disabled.");
                                 }
                             }
                         }
@@ -1662,7 +1689,7 @@ impl App {
                         if items.is_empty() {
                             println!("No watch history yet.");
                         } else {
-                            println!("\n📜 Watch History:");
+                            println!("\nWatch History:");
                             for (_, p) in items {
                                 println!(
                                     "  {}  S{:02}E{:02}  {}",
@@ -1676,23 +1703,23 @@ impl App {
                         let is_fav = self.state.toggle_favorite(&series.slug);
                         let _ = state::save(&self.state);
                         if is_fav {
-                            println!("★ Added '{}' to favorites!", series.title);
+                            println!("Added '{}' to favorites.", series.title);
                         } else {
-                            println!("☆ Removed '{}' from favorites.", series.title);
+                            println!("Removed '{}' from favorites.", series.title);
                         }
                     }
                     Some("Mark as watched") => {
                         self.state.record(&series, &current);
                         let _ = state::save(&self.state);
-                        println!("✓ Marked as watched: {}", current.display());
+                        println!("[OK] Marked as watched: {}", current.display());
                     }
                     Some("Mark as unwatched") => {
                         self.state.series.remove(&series.slug);
                         let _ = state::save(&self.state);
-                        println!("✓ Removed from watch history: {}", series.title);
+                        println!("[OK] Removed from watch history: {}", series.title);
                     }
                     Some("Episode information") => {
-                        println!("\nℹ️ Episode Information:");
+                        println!("\nEpisode Information:");
                         println!("  Series: {}", series.title);
                         println!("  Slug: {}", series.slug);
                         println!("  Season: {}", current.season);
@@ -1701,9 +1728,9 @@ impl App {
                         println!(
                             "  Favorite: {}",
                             if self.state.is_favorite(&series.slug) {
-                                "Yes ★"
+                                "Yes"
                             } else {
-                                "No ☆"
+                                "No"
                             }
                         );
                         println!("  Episode URL: {}", current.url);
@@ -1718,7 +1745,7 @@ impl App {
                         println!();
                     }
                     Some("Playback statistics") => {
-                        println!("\n📊 Playback Statistics:");
+                        println!("\nPlayback Statistics:");
                         println!(
                             "  Player: {}",
                             player::find_player(self.opts.player.as_deref())
@@ -1741,18 +1768,18 @@ impl App {
                     }
                     Some("Refresh episode list") => {
                         self.page_cache.retain(|(slug, _), _| slug != &series.slug);
-                        println!("✓ Refreshed episode list cache for {}", series.title);
+                        println!("[OK] Refreshed episode list cache for {}", series.title);
                     }
                     Some("Refresh stream sources") => {
-                        println!("✓ Refreshed stream sources for {}", current.display());
+                        println!("[OK] Refreshed stream sources for {}", current.display());
                         break_to_play = true;
                     }
                     Some("Clear cache") => {
                         self.page_cache.clear();
-                        println!("✓ In-memory cache cleared.");
+                        println!("[OK] In-memory cache cleared.");
                     }
                     Some("Settings") => {
-                        println!("\n⚙️ Settings & Configuration:");
+                        println!("\nSettings & Configuration:");
                         println!("  Base URL: {}", self.opts.base_url);
                         println!("  User-Agent: {}", self.opts.user_agent);
                         println!("  UI Language: {:?}", self.opts.ui_lang);
@@ -1797,6 +1824,10 @@ fn run(opts: Options) -> Result<()> {
                 .map(|s| s.display().to_string())
                 .unwrap_or("NOT FOUND".into())
         );
+        match player::check_player_health(opts.player.as_deref()) {
+            Ok(ver) => println!("Player health: {ver}"),
+            Err(e) => println!("Player warning: {e:#}"),
+        }
         let net = net::Network::new(&opts.base_url, &opts.user_agent)?;
         match net.page(net.root(), None) {
             Ok((_, final_url)) => println!("Endpoint: reachable ({final_url})"),

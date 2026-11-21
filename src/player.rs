@@ -99,14 +99,75 @@ pub fn play(
 ) -> Result<()> {
     let program = find_player(player)
         .context("mpv not found: install mpv or specify --player /path/to/mpv")?;
-    let code = Command::new(&program)
-        .args(mpv_arguments(stream, series, ep, extra))
+    let mut cmd = Command::new(&program);
+    cmd.args(mpv_arguments(stream, series, ep, extra));
+
+    #[cfg(target_os = "linux")]
+    ensure_linux_compat_env(&mut cmd);
+
+    let code = cmd
         .status()
         .with_context(|| format!("Cannot launch {}", program.display()))?;
     if !code.success() {
+        if code.code() == Some(127) {
+            eprintln!("\n[Error] mpv failed with exit code 127 (missing shared library).");
+            eprintln!(
+                "Tip: run 'aniworld --doctor' or check 'ldd {}' for missing shared libraries.",
+                program.display()
+            );
+        }
         bail!("mpv exited unsuccessfully: {code}")
     }
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+pub fn ensure_linux_compat_env(cmd: &mut Command) {
+    let lib_dir = crate::state::config_dir().join("lib");
+    let target_sndio9 = lib_dir.join("libsndio.so.9");
+    if !target_sndio9.exists() && !Path::new("/usr/lib/libsndio.so.9").exists() {
+        for candidate in [
+            "/usr/lib/libsndio.so.7",
+            "/usr/lib/libsndio.so.8",
+            "/usr/lib/libsndio.so",
+        ] {
+            if Path::new(candidate).exists() {
+                let _ = std::fs::create_dir_all(&lib_dir);
+                let _ = std::os::unix::fs::symlink(candidate, &target_sndio9);
+                break;
+            }
+        }
+    }
+    if target_sndio9.exists() {
+        let current_ld = env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        let new_ld = if current_ld.is_empty() {
+            lib_dir.display().to_string()
+        } else {
+            format!("{}:{}", lib_dir.display(), current_ld)
+        };
+        cmd.env("LD_LIBRARY_PATH", new_ld);
+    }
+}
+
+pub fn check_player_health(player: Option<&str>) -> Result<String> {
+    let program = find_player(player)
+        .context("mpv not found: install mpv or specify --player /path/to/mpv")?;
+    let mut cmd = Command::new(&program);
+    cmd.arg("--version");
+    #[cfg(target_os = "linux")]
+    ensure_linux_compat_env(&mut cmd);
+    let output = cmd
+        .output()
+        .with_context(|| format!("Cannot execute {}", program.display()))?;
+    if output.status.success() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let first_line = text.lines().next().unwrap_or("mpv").trim();
+        Ok(format!("{} ({first_line})", program.display()))
+    } else {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let err_line = err.lines().next().unwrap_or("failed").trim();
+        bail!("{} ({err_line})", program.display())
+    }
 }
 
 #[cfg(test)]
